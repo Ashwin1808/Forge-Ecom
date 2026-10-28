@@ -1,0 +1,5 @@
+-r services/inventory-service/requirements.in
+-r services/order-service/requirements.in
+pytest
+pytest-asyncio
+pytest-cov

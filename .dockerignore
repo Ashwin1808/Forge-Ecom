@@ -1,0 +1,17 @@
+.git
+.gitignore
+.venv
+.env
+.pytest_cache
+.mypy_cache
+.ruff_cache
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pytest_cache
+frontend/node_modules
+frontend/dist
+frontend/coverage
+node_modules
+tests
+docs
