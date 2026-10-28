@@ -11,9 +11,10 @@ from ..config import Settings
 from ..database import Database
 from ..errors import ApiError
 from ..metrics import OrderMetrics
-from ..models import Order, OrderStatus
+from ..models import Order, OrderChannel, OrderStatus, PaymentStatus
 from ..schemas import (
     CustomerOut,
+    DeliveryAddressOut,
     OrderCreate,
     OrderItemOut,
     OrderItemsOut,
@@ -62,6 +63,10 @@ FAILURE_DEFINITIONS: dict[str, tuple[int, str]] = {
         500,
         "The order could not be processed.",
     ),
+    "reservation_expired": (
+        409,
+        "The checkout reservation expired before payment was completed.",
+    ),
 }
 
 
@@ -88,10 +93,25 @@ def get_settings(request: Request) -> Settings:
 
 
 def order_to_out(order: Order) -> OrderOut:
+    delivery_address = None
+    if order.delivery_line1 is not None:
+        delivery_address = DeliveryAddressOut(
+            line1=order.delivery_line1,
+            line2=order.delivery_line2,
+            city=order.delivery_city or "",
+            region=order.delivery_region,
+            postal_code=order.delivery_postal_code or "",
+            country=order.delivery_country or "",
+        )
     return OrderOut(
         id=order.id,
         status=OrderStatus(order.status),
+        payment_status=(
+            PaymentStatus(order.payment_status) if order.payment_status else None
+        ),
+        channel=OrderChannel(order.channel),
         customer=CustomerOut(name=order.customer_name, email=order.customer_email),
+        delivery_address=delivery_address,
         items=[
             OrderItemOut(
                 product_id=item.product_id,
@@ -106,6 +126,7 @@ def order_to_out(order: Order) -> OrderOut:
         ],
         total_cents=order.total_cents,
         currency=order.currency,
+        reservation_expires_at=order.reservation_expires_at,
         failure_code=order.failure_code,
         failure_message=order.failure_message,
         created_at=order.created_at,
@@ -135,7 +156,10 @@ def replay_order(order: Order, metrics: OrderMetrics) -> OrderOut:
             details={"order_id": str(order.id)},
             headers={"Retry-After": "2"},
         )
-    if order.status == OrderStatus.CONFIRMED.value:
+    if order.status in {
+        OrderStatus.CONFIRMED.value,
+        OrderStatus.AWAITING_PAYMENT.value,
+    }:
         metrics.order_attempts.labels(outcome="replay").inc()
         return order_to_out(order)
     metrics.order_attempts.labels(outcome="replay").inc()

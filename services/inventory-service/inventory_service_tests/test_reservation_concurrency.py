@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from inventory_service.models import Inventory, Reservation
-from inventory_service.transactions import InsufficientStockError, reserve_stock
+from inventory_service.transactions import InsufficientStockError, release_stock, reserve_stock
 
 pytestmark = pytest.mark.integration
 
@@ -81,3 +81,37 @@ def test_concurrent_duplicate_reservation_decrements_once(client, database):
         assert inventory.quantity_available == 3
         assert inventory.quantity_reserved == 2
         assert len(session.scalars(select(Reservation)).all()) == 1
+
+
+def test_concurrent_release_restores_stock_once(client, database):
+    product = create_product(client, sku="CON-003", quantity=5)
+    product_id = uuid.UUID(product["id"])
+    reservation_id = uuid.uuid4()
+    assert reserve_stock(
+        database.session_factory,
+        reservation_id=reservation_id,
+        request_hash="release-concurrency-hash",
+        items=[(product_id, 3)],
+    )
+
+    def attempt(_index: int) -> bool:
+        released, _ = release_stock(
+            database.session_factory, reservation_id=reservation_id
+        )
+        return released
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(attempt, range(8)))
+
+    assert results.count(True) == 1
+    assert results.count(False) == 7
+
+    with database.session() as session:
+        inventory = session.get(Inventory, product_id)
+        assert inventory is not None
+        assert inventory.quantity_available == 5
+        assert inventory.quantity_reserved == 0
+        reservation = session.get(Reservation, reservation_id)
+        assert reservation is not None
+        assert reservation.status == "RELEASED"
+        assert reservation.released_at is not None

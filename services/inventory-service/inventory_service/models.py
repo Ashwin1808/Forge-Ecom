@@ -76,13 +76,19 @@ class Inventory(Base):
 
 class Reservation(Base):
     __tablename__ = "inventory_reservations"
-    __table_args__ = (Index("ix_inventory_reservations_created_at", "created_at"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('RESERVED', 'RELEASED')", name="valid_status"),
+        Index("ix_inventory_reservations_created_at", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="RESERVED")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    released_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     items: Mapped[list["ReservationItem"]] = relationship(

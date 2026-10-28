@@ -97,6 +97,7 @@ class ReservationOut(BaseModel):
     status: str
     items: list[ReservationItemOut]
     created_at: datetime
+    released_at: datetime | None
 
 
 class ShortageOut(BaseModel):

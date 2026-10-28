@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     inventory_timeout_seconds: float = Field(default=3.0, ge=0.5, le=30.0)
     store_currency: str = "USD"
 
+    checkout_reservation_ttl_seconds: int = Field(default=900, ge=1, le=86_400)
+    checkout_expiry_enabled: bool = True
+    checkout_expiry_sweep_seconds: int = Field(default=30, ge=1, le=3600)
+    checkout_expiry_batch_size: int = Field(default=50, ge=1, le=500)
+
     max_request_bytes: int = Field(default=131_072, ge=1024, le=10_485_760)
     rate_limit_per_minute: int = Field(default=120, ge=0, le=100_000)
     cors_origins: str = "http://localhost:5173"

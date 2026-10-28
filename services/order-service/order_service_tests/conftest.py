@@ -30,6 +30,9 @@ class FakeInventoryClient:
         self.get_error: InventoryClientError | None = None
         self.reserve_delay = 0.0
         self.reserve_calls: list[dict] = []
+        self.reserve_override_items: list[ReservedLine] | None = None
+        self.release_error: InventoryClientError | None = None
+        self.release_calls: list[dict] = []
         self.closed = False
         self.product_id = uuid.UUID("11111111-1111-4111-8111-111111111111")
         self.second_product_id = uuid.UUID("22222222-2222-4222-8222-222222222222")
@@ -59,7 +62,8 @@ class FakeInventoryClient:
         return InventoryReservation(
             id=reservation_id,
             status="RESERVED",
-            items=[
+            items=self.reserve_override_items
+            or [
                 ReservedLine(
                     product_id=product_id,
                     sku=f"SKU-{str(product_id)[:4]}",
@@ -71,6 +75,14 @@ class FakeInventoryClient:
                 for product_id, quantity in items
             ],
         )
+
+    async def release(self, *, reservation_id, request_id=None):
+        self.release_calls.append(
+            {"reservation_id": reservation_id, "request_id": request_id}
+        )
+        if self.release_error is not None:
+            raise self.release_error
+        return "RELEASED"
 
     async def list_products(self, *, page, page_size, request_id=None):
         if self.list_error is not None:
@@ -104,6 +116,7 @@ def settings() -> Settings:
         log_level="WARNING",
         rate_limit_per_minute=100_000,
         inventory_base_url="http://inventory-service:8000",
+        checkout_expiry_enabled=False,
         db_pool_size=10,
         db_max_overflow=20,
     )

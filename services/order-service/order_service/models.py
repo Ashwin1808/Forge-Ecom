@@ -27,8 +27,23 @@ NAMING_CONVENTION = {
 
 class OrderStatus(str, enum.Enum):
     PENDING = "PENDING"
+    AWAITING_PAYMENT = "AWAITING_PAYMENT"
     CONFIRMED = "CONFIRMED"
     FAILED = "FAILED"
+    EXPIRED = "EXPIRED"
+
+
+class PaymentStatus(str, enum.Enum):
+    CREATED = "CREATED"
+    PENDING = "PENDING"
+    PAID = "PAID"
+    FAILED = "FAILED"
+    REFUNDED = "REFUNDED"
+
+
+class OrderChannel(str, enum.Enum):
+    OPS = "OPS"
+    STOREFRONT = "STOREFRONT"
 
 
 class Base(DeclarativeBase):
@@ -39,21 +54,44 @@ class Order(Base):
     __tablename__ = "orders"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('PENDING', 'CONFIRMED', 'FAILED')", name="valid_status"
+            "status IN ('PENDING', 'AWAITING_PAYMENT', 'CONFIRMED', 'FAILED', 'EXPIRED')",
+            name="valid_status",
+        ),
+        CheckConstraint(
+            "payment_status IS NULL OR payment_status IN "
+            "('CREATED', 'PENDING', 'PAID', 'FAILED', 'REFUNDED')",
+            name="valid_payment_status",
+        ),
+        CheckConstraint(
+            "channel IN ('OPS', 'STOREFRONT')", name="valid_channel"
         ),
         CheckConstraint("total_cents IS NULL OR total_cents >= 0", name="total_non_negative"),
         Index("ix_orders_status_created_at", "status", "created_at"),
         Index("ix_orders_created_at", "created_at"),
+        Index("ix_orders_reservation_expires_at", "reservation_expires_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=OrderStatus.PENDING.value
     )
+    payment_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    channel: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=OrderChannel.OPS.value
+    )
     customer_name: Mapped[str] = mapped_column(String(120), nullable=False)
     customer_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    delivery_line1: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    delivery_line2: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    delivery_city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    delivery_region: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    delivery_postal_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    delivery_country: Mapped[str | None] = mapped_column(String(80), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     total_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reservation_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     failure_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

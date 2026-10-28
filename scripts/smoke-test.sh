@@ -85,4 +85,55 @@ fi
 detail="$(curl -fsS "$BASE_URL/api/v1/orders/$order_id")"
 detail_status="$("$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$detail")"
 echo "Order $order_id is $detail_status (idempotent replay verified)."
+
+storefront_key="smoke-store-$(date +%s)-$$"
+storefront_payload="$(
+  "$PYTHON" - "$product_id" <<'PY'
+import json, sys
+print(json.dumps({
+    "customer": {"name": "Storefront Smoke", "email": "storefront-smoke@example.com"},
+    "delivery_address": {
+        "line1": "1 Market Street",
+        "line2": "Suite 200",
+        "city": "San Francisco",
+        "region": "CA",
+        "postal_code": "94105",
+        "country": "US",
+    },
+    "items": [{"product_id": sys.argv[1], "quantity": 1}],
+}))
+PY
+)"
+
+storefront_response="$(
+  curl -fsS -X POST "$BASE_URL/api/v1/storefront/checkout" \
+    -H "Content-Type: application/json" \
+    -H "Idempotency-Key: $storefront_key" \
+    --data "$storefront_payload"
+)"
+storefront_order_id="$("$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$storefront_response")"
+storefront_status="$("$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$storefront_response")"
+storefront_payment="$("$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["payment_status"])' <<<"$storefront_response")"
+storefront_channel="$("$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["channel"])' <<<"$storefront_response")"
+
+if [ "$storefront_status" != "AWAITING_PAYMENT" ] || [ "$storefront_payment" != "CREATED" ] || [ "$storefront_channel" != "STOREFRONT" ]; then
+  echo "Unexpected storefront checkout state: $storefront_response" >&2
+  exit 1
+fi
+
+storefront_replay="$(
+  curl -fsS -X POST "$BASE_URL/api/v1/storefront/checkout" \
+    -H "Content-Type: application/json" \
+    -H "Idempotency-Key: $storefront_key" \
+    --data "$storefront_payload"
+)"
+storefront_replay_id="$("$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$storefront_replay")"
+if [ "$storefront_replay_id" != "$storefront_order_id" ]; then
+  echo "Storefront idempotency replay returned a different order." >&2
+  exit 1
+fi
+
+storefront_detail="$(curl -fsS "$BASE_URL/api/v1/storefront/orders/$storefront_order_id")"
+storefront_detail_status="$("$PYTHON" -c 'import json,sys; print(json.load(sys.stdin)["status"])' <<<"$storefront_detail")"
+echo "Storefront order $storefront_order_id is $storefront_detail_status (reservation replay verified)."
 echo "Smoke test passed."

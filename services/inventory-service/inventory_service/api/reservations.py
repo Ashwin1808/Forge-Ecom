@@ -16,6 +16,7 @@ from ..transactions import (
     ReservationConflictError,
     UnknownProductsError,
     load_reservation,
+    release_stock,
     reserve_stock,
 )
 
@@ -42,6 +43,7 @@ def reservation_to_out(reservation: Reservation) -> ReservationOut:
         id=reservation.id,
         status=reservation.status,
         created_at=reservation.created_at,
+        released_at=reservation.released_at,
         items=[
             ReservationItemOut(
                 product_id=item.product_id,
@@ -116,6 +118,41 @@ def create_reservation(
     )
     body = reservation_to_out(reservation).model_dump(mode="json")
     return JSONResponse(status_code=201 if created else 200, content=body)
+
+
+@router.post("/{reservation_id}/release", response_model=ReservationOut)
+def release_reservation(
+    reservation_id: uuid.UUID,
+    session: Annotated[Session, Depends(get_session)],
+    database: Annotated[Database, Depends(get_database)],
+    metrics: Annotated[InventoryMetrics, Depends(get_metrics)],
+) -> ReservationOut:
+    released, _ = release_stock(
+        database.session_factory, reservation_id=reservation_id
+    )
+    session.expire_all()
+    reservation = load_reservation(session, reservation_id)
+    if reservation is None:
+        metrics.reservation_attempts.labels(outcome="release_not_found").inc()
+        raise ApiError(404, "reservation_not_found", "Reservation not found.")
+
+    if released:
+        metrics.reservation_attempts.labels(outcome="released").inc()
+        metrics.units_released.inc(
+            sum(item.quantity for item in reservation.items)
+        )
+    else:
+        metrics.reservation_attempts.labels(outcome="release_replay").inc()
+    logger.info(
+        "reservation_%s",
+        "released" if released else "release_replayed",
+        extra={
+            "reservation_id": str(reservation.id),
+            "item_count": len(reservation.items),
+            "units": sum(item.quantity for item in reservation.items),
+        },
+    )
+    return reservation_to_out(reservation)
 
 
 @router.get("/{reservation_id}", response_model=ReservationOut)

@@ -43,6 +43,17 @@ class OrderMetrics:
             labelnames=("outcome",),
             registry=self.registry,
         )
+        self.checkout_attempts = Counter(
+            "checkout_attempts_total",
+            "Storefront checkout attempts by outcome",
+            labelnames=("outcome",),
+            registry=self.registry,
+        )
+        self.expired_orders = Counter(
+            "checkout_orders_expired_total",
+            "Storefront checkout reservations expired",
+            registry=self.registry,
+        )
         self.downstream_requests = Counter(
             "downstream_requests_total",
             "Calls to downstream services",

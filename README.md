@@ -1,8 +1,8 @@
 # Forge Commerce
 
-Forge Commerce is a local, production-shaped order management workload built for DevSecOps exercises. It combines a React operations console, two FastAPI microservices, PostgreSQL, Docker Compose, automated tests, and explicit security boundaries.
+Forge Commerce is a local, production-shaped commerce workload built for DevSecOps exercises. It combines a React customer storefront and operations console, two FastAPI microservices, PostgreSQL, Docker Compose, automated tests, and explicit security boundaries.
 
-The application is intentionally small enough to run on a laptop, but it exercises real failure modes: idempotent order creation, concurrent inventory reservation, downstream timeouts, retained failed orders, health checks, migrations, and container hardening.
+The application is intentionally small enough to run on a laptop, but it exercises real failure modes: idempotent order creation and checkout, concurrent inventory reservation, reservation expiry and release, downstream timeouts, retained failed orders, health checks, migrations, and container hardening.
 
 > This is a local development and training environment. It is not production-ready. See [Security](docs/security.md) for implemented controls and deliberate gaps.
 
@@ -20,7 +20,7 @@ The application is intentionally small enough to run on a laptop, but it exercis
 ## Architecture
 
 ```text
-Browser
+Browser (storefront + operations console)
   │
   ▼
 nginx :8080  ── /api/* and /health ──▶  order-service :8000
@@ -33,6 +33,8 @@ nginx :8080  ── /api/* and /health ──▶  order-service :8000
   │
   └── only the frontend is published on the host
 ```
+
+The Order Service also runs a checkout-expiry worker. It releases inventory holds through the internal Inventory Service and marks abandoned storefront checkouts `EXPIRED`.
 
 - The frontend talks only to the Order Service through the nginx same-origin proxy.
 - The Inventory Service is internal to the Compose network. It is not published to the host.
@@ -55,7 +57,7 @@ cp .env.example .env
 docker compose up --build -d --wait
 ```
 
-Open **http://localhost:8080**.
+Open **http://localhost:8080/store** for the customer storefront or **http://localhost:8080/** for the operations console.
 
 The first start automatically:
 
@@ -71,7 +73,7 @@ make ps
 make smoke
 ```
 
-`make smoke` exercises the real browser path through nginx: health, catalog, order creation, and idempotent replay.
+`make smoke` exercises the real browser path through nginx: health, catalog, operations order creation, storefront checkout, and idempotent replay for both flows.
 
 Useful commands:
 
@@ -99,16 +101,29 @@ docker compose up --build -d --wait
 
 ## What You Can Do
 
+### Customer storefront
+
+- Browse the product catalog and product detail pages.
+- Add products to a persistent browser cart, update quantities, and remove items.
+- Enter customer and delivery details at checkout.
+- Reserve an order with server-side price and stock validation.
+- See the reservation hold, payment state, and delivery details on the confirmation page.
+- Let abandoned reservations expire automatically, releasing inventory.
+
+### Operations console
+
 - View order counts, confirmation health, recent orders, and low-stock products.
 - Browse the product catalog proxied from the Inventory Service.
 - Create an order with one or more products.
 - Watch the Order Service reserve stock synchronously through the Inventory Service.
 - See confirmed orders with snapshotted names, SKUs, prices, and totals.
-- See failed orders retained for audit with a failure code and message.
+- See failed and expired orders retained for audit with a failure code and message.
 - Replay an order safely with the same `Idempotency-Key`.
 - Inspect Prometheus metrics, readiness, and structured logs.
 
 ## Order Lifecycle
+
+### Operations orders
 
 ```text
 POST /api/v1/orders
@@ -129,14 +144,39 @@ Replay with the same Idempotency-Key
         └── PENDING ────▶ 409 order_in_progress, Retry-After: 2
 ```
 
+### Storefront checkout
+
+```text
+POST /api/v1/storefront/checkout
+        │
+        ▼
+Create PENDING storefront order + customer/address snapshot + idempotency record
+        │
+        ▼
+Reserve inventory (reservation_id = order.id)
+        │
+        ├── success ──▶ AWAITING_PAYMENT (payment_status = CREATED)
+        │                  │
+        │                  └── reservation expires ──▶ EXPIRED, stock released
+        │
+        └── failure ──▶ FAILED (retained, failure_code/message)
+
+Replay with the same Idempotency-Key
+        ├── AWAITING_PAYMENT / CONFIRMED ──▶ return the original order
+        ├── EXPIRED ────────────────────────▶ 409 checkout_expired
+        └── FAILED ─────────────────────────▶ return the original failure
+```
+
+Storefront checkout creates a real inventory reservation but does not collect payment. `payment_status=CREATED` records that a payment step would be next; no charge or payment object exists yet. The reservation TTL defaults to 15 minutes. A background worker releases expired reservations and marks the order `EXPIRED`.
+
 Important failure semantics:
 
 - **Insufficient stock:** the inventory transaction rolls back and the order is retained as `FAILED` with HTTP `409`.
 - **Unknown product:** the order is retained as `FAILED` with HTTP `422`.
 - **Inventory timeout/unavailable:** the order is retained as `FAILED` with HTTP `504`/`503`.
-- **Timeout ambiguity:** if the Inventory Service commits a reservation but the Order Service times out waiting, the order is marked `FAILED` while stock may remain reserved. This is a deliberate, documented distributed-systems limitation. There is no automatic compensation worker in this version.
-- **Crash after pending insert:** an order can remain `PENDING`. Replays return `order_in_progress`; reconciliation is manual. The console exposes the state rather than hiding it.
-- **Failed orders are never deleted** by the application; they remain visible for audit.
+- **Timeout ambiguity:** if the Inventory Service commits a reservation but the Order Service times out waiting, the order is marked `FAILED` while stock may remain reserved. The expiry worker retries the release after the reservation TTL, so the window is bounded rather than permanent.
+- **Crash after pending insert:** an order can remain `PENDING` until the expiry worker reconciles its reservation. Replays return `order_in_progress`; the console exposes the state rather than hiding it.
+- **Failed and expired orders are never deleted** by the application; they remain visible for audit.
 
 Inventory correctness:
 
@@ -156,10 +196,12 @@ Through the frontend proxy, use `http://localhost:8080`. Directly against the Or
 | `GET` | `/metrics` | Prometheus metrics (Order Service direct only) |
 | `GET` | `/api/v1/products` | Paginated catalog proxy |
 | `GET` | `/api/v1/products/{id}` | Product detail proxy |
-| `POST` | `/api/v1/orders` | Create or replay an order |
+| `POST` | `/api/v1/orders` | Create or replay an operations order |
 | `GET` | `/api/v1/orders` | Paginated orders, optional `status` |
 | `GET` | `/api/v1/orders/{id}` | Order detail |
 | `GET` | `/api/v1/orders/{id}/items` | Order items |
+| `POST` | `/api/v1/storefront/checkout` | Create or replay a storefront checkout |
+| `GET` | `/api/v1/storefront/orders/{id}` | Storefront order confirmation |
 
 Create an order:
 
@@ -193,8 +235,8 @@ make test
 
 This starts the dedicated test PostgreSQL container on `127.0.0.1:55433`, then runs:
 
-- **75 backend tests:** service unit/integration tests, cross-service end-to-end tests, concurrency tests, and security hardening tests.
-- **8 frontend tests:** order creation and failure handling, validation, idempotency submission, order listing/filtering, and inventory rendering.
+- **109 backend tests:** service unit/integration tests, cross-service storefront checkout and expiry tests, concurrency tests, and security hardening tests.
+- **22 frontend tests:** storefront catalog/cart/checkout/order states, order creation and failure handling, validation, idempotency submission, order listing/filtering, and inventory rendering.
 
 Individual suites:
 
@@ -268,7 +310,7 @@ Compose reads optional values from `.env`. Defaults are safe for local use only.
 | `ORDER_RATE_LIMIT_PER_MINUTE` | `120` | Per-client API request limit on the Order Service |
 | `INVENTORY_RATE_LIMIT_PER_MINUTE` | `120` | Per-client API request limit on the Inventory Service |
 
-Service-level settings can also be supplied as environment variables, including `DATABASE_URL`, `INVENTORY_BASE_URL`, `CORS_ORIGINS`, `SEED_ON_START`, `MAX_REQUEST_BYTES`, and database pool/timeouts. Defaults live in each service's `config.py`.
+Service-level settings can also be supplied as environment variables, including `DATABASE_URL`, `INVENTORY_BASE_URL`, `CORS_ORIGINS`, `SEED_ON_START`, `MAX_REQUEST_BYTES`, `CHECKOUT_RESERVATION_TTL_SECONDS`, `CHECKOUT_EXPIRY_ENABLED`, `CHECKOUT_EXPIRY_SWEEP_SECONDS`, and database pool/timeouts. Defaults live in each service's `config.py`.
 
 Never commit `.env` or real credentials. The defaults exist only for the isolated local stack.
 
@@ -292,13 +334,16 @@ Example metric names:
 - `http_error_responses_total`
 - `inventory_reservation_attempts_total`
 - `inventory_units_reserved_total`
+- `inventory_units_released_total`
 - `order_creation_attempts_total`
+- `checkout_attempts_total`
+- `checkout_orders_expired_total`
 - `downstream_requests_total`
 
 ## Repository Layout
 
 ```text
-frontend/                     React operations console and nginx config
+frontend/                     React storefront, operations console, and nginx config
 services/order-service/       Public order API, workflow, client, migrations, tests
 services/inventory-service/   Internal inventory API, transactions, migrations, tests
 tests/integration/            Cross-service end-to-end tests

@@ -95,3 +95,38 @@ export function AlertIcon({ size = 18 }: IconProps) {
     </svg>
   )
 }
+
+export function StoreIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M4 10h16l-1.5-6h-13L4 10Z" />
+      <path d="M5 10v10h14V10M9 20v-6h6v6" />
+    </svg>
+  )
+}
+
+export function CartIcon({ size = 18 }: IconProps) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M3 4h2l2.2 10.2a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 2-1.6L20 7H6" />
+      <circle cx="10" cy="20" r="1.2" />
+      <circle cx="18" cy="20" r="1.2" />
+    </svg>
+  )
+}
+
+export function MinusIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M5 12h14" />
+    </svg>
+  )
+}
+
+export function TrashIcon({ size = 16 }: IconProps) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5" />
+    </svg>
+  )
+}

@@ -44,21 +44,25 @@ Not published:
 
 ### Frontend
 
-- React SPA with a dashboard, order list, order detail, new-order form, and inventory view.
+- React SPA with a customer storefront and an operations console.
+- Storefront: catalog, product detail, persistent cart, checkout, and order confirmation.
+- Operations: dashboard, order list, order detail, new-order form, and inventory view.
 - Talks only to same-origin `/api/v1/*` and `/health`.
-- Displays `PENDING`, `CONFIRMED`, and `FAILED` states explicitly.
-- Keeps an `Idempotency-Key` stable across retries of the same order form submission.
-- Does not own business state; the Order Service is authoritative.
+- Displays `PENDING`, `AWAITING_PAYMENT`, `CONFIRMED`, `EXPIRED`, and `FAILED` states, plus `payment_status` and `channel`.
+- Keeps an `Idempotency-Key` stable across retries of the same checkout or order form submission.
+- Persists the cart in browser local storage only; the Order Service is authoritative for prices, stock, and orders.
 
 ### Order Service
 
 Owns:
 
-- Order records, order items, and commercial totals.
-- Idempotency records for order creation.
+- Order records, order items, customer/address snapshots, and commercial totals.
+- Separate order status, payment status, and sales channel.
+- Idempotency records for operations orders and storefront checkout.
 - The public API surface consumed by the browser.
 - The product catalog proxy to the Inventory Service.
 - The order workflow and its failure classification.
+- Checkout reservation expiry and the background release worker.
 - Order metrics and request context.
 
 Does not own:
@@ -74,7 +78,7 @@ Owns:
 - Products and their active state.
 - Available and reserved quantities.
 - Reservation records and reservation line snapshots.
-- Atomic stock reservation.
+- Atomic stock reservation and idempotent reservation release.
 - The internal product creation endpoint used for seeding/testing.
 
 Does not own:
@@ -99,12 +103,15 @@ There are no cross-database foreign keys. The services integrate over HTTP, pres
 `orders`
 
 - UUID primary key.
-- `status` in `PENDING`, `CONFIRMED`, `FAILED`.
-- Customer name/email snapshot.
+- `status` in `PENDING`, `AWAITING_PAYMENT`, `CONFIRMED`, `EXPIRED`, `FAILED`.
+- `payment_status` in `CREATED`/`PENDING`/`FAILED`/`PAID`/`REFUNDED`, nullable until a payment step exists.
+- `channel` in `OPS`/`STOREFRONT`.
+- Customer name/email and delivery-address snapshots.
 - Currency, nullable total, nullable failure code/message.
+- `reservation_expires_at` for storefront checkout holds.
 - Created/updated timestamps.
-- Indexes for status/created time and created time.
-- Checks for valid status and non-negative total.
+- Indexes for status/created time, created time, and reservation expiry.
+- Checks for valid status, payment status, channel, and non-negative total.
 
 `order_items`
 
@@ -140,7 +147,8 @@ There are no cross-database foreign keys. The services integrate over HTTP, pres
 
 - Reservation UUID supplied by the Order Service (equal to the order ID).
 - Request fingerprint.
-- Status (`RESERVED`).
+- Status (`RESERVED` or `RELEASED`).
+- `released_at`, nullable until release.
 - Created timestamp.
 
 `inventory_reservation_items`
@@ -186,6 +194,42 @@ sequenceDiagram
 
 The frontend does not create orders directly against the Inventory Service. The Order Service always initiates reservation with the order UUID, which provides a natural idempotency key across the boundary.
 
+## Storefront Checkout Workflow
+
+```mermaid
+sequenceDiagram
+    participant B as Storefront
+    participant O as Order Service
+    participant OD as Order DB
+    participant I as Inventory Service
+    participant ID as Inventory DB
+
+    B->>O: POST /api/v1/storefront/checkout + Idempotency-Key
+    O->>OD: Look up checkout idempotency key
+    alt key exists, same checkout payload
+        O-->>B: Replay order, failure, or checkout_expired
+    else new key
+        O->>OD: Insert PENDING order + customer/address + idempotency record
+        O->>I: POST reservation (reservation_id = order.id)
+        alt enough stock
+            I->>ID: Lock inventory, reserve stock, insert reservation
+            I-->>O: Reservation snapshot
+            O->>OD: Store snapshot/total, AWAITING_PAYMENT, payment CREATED, expiry
+            O-->>B: 201 AWAITING_PAYMENT
+        else failure
+            O->>OD: Mark order FAILED
+            O-->>B: Classified failure + order_id
+        end
+    end
+
+    Note over O,I: Expiry worker after reservation_expires_at
+    O->>I: POST /reservations/{id}/release
+    I->>ID: Restore available, clear reserved, mark RELEASED
+    O->>OD: Mark order EXPIRED
+```
+
+The storefront checkout API is separate from the operations order API. Operations orders still become `CONFIRMED` without payment. Storefront orders stop at `AWAITING_PAYMENT`; payment collection is Phase 2.
+
 ## Idempotency and Concurrency
 
 ### Order creation
@@ -193,10 +237,12 @@ The frontend does not create orders directly against the Inventory Service. The 
 - `Idempotency-Key` is required and validated by FastAPI.
 - The request payload is canonicalized: items sorted by product ID, JSON sorted keys, compact separators, SHA-256 hash.
 - Same key + same fingerprint:
-  - `CONFIRMED` returns the order.
+  - `CONFIRMED` or `AWAITING_PAYMENT` returns the order.
+  - `EXPIRED` returns `409 checkout_expired` for storefront checkout.
   - `FAILED` returns the original failure and order ID.
-  - `PENDING` returns `409 order_in_progress` with `Retry-After: 2`.
+  - `PENDING` returns `409 order_in_progress`/`checkout_in_progress` with `Retry-After: 2`.
 - Same key + different fingerprint returns `409 idempotency_conflict`.
+- Storefront checkout fingerprints include the customer, delivery address, and items.
 - Concurrent first submissions race on the primary key; the loser re-reads the winner and replays it.
 
 ### Inventory reservation
@@ -205,6 +251,7 @@ The frontend does not create orders directly against the Inventory Service. The 
 - The request fingerprint is canonicalized the same way.
 - An existing reservation with the same fingerprint returns `200` with the stored snapshot.
 - An existing reservation with a different fingerprint returns `409`.
+- Releasing an existing `RELEASED` reservation is idempotent and returns `200`.
 - Inventory rows are selected in product-ID order with `SELECT ... FOR UPDATE`.
 - Shortages are computed before any mutation. On failure, the transaction rolls back.
 - Unique constraints and check constraints provide a final database-level guard.
@@ -217,22 +264,26 @@ The workload demonstrates database-enforced idempotency and row-level concurrenc
 
 | Condition | Order state | HTTP result | Inventory effect |
 | --- | --- | --- | --- |
-| New order, stock available | `CONFIRMED` | `201` | Stock moved from available to reserved |
+| New operations order, stock available | `CONFIRMED` | `201` | Stock moved from available to reserved |
+| Storefront checkout, stock available | `AWAITING_PAYMENT` | `201` | Stock reserved; expiry recorded |
 | Insufficient stock | `FAILED` | `409` | Transaction rolled back |
 | Unknown/inactive product | `FAILED` | `422` | Transaction rolled back |
 | Inventory timeout | `FAILED` | `504` | Unknown; the reservation may have committed |
 | Inventory unavailable | `FAILED` | `503` | No reservation |
 | Inventory protocol mismatch | `FAILED` | `502` | Reservation may exist; needs reconciliation |
 | Order process crash before finalization | `PENDING` | Client sees network error | Reservation may or may not exist |
-| Duplicate request while pending | `PENDING` | `409 order_in_progress` | No second reservation |
+| Duplicate request while pending | `PENDING` | `409 order_in_progress`/`checkout_in_progress` | No second reservation |
+| Reservation expires | `EXPIRED` | None (background) | Release restores available stock |
+| Expiry release fails | `AWAITING_PAYMENT` | None (background retry) | Stock remains reserved until retry |
+| Storefront lookup of operations order | unchanged | `404 order_not_found` | No data exposed |
 
 ### Timeout ambiguity
 
-A timeout is not proof that the reservation failed. The Inventory Service may have committed before the response was lost. The Order Service marks the order `FAILED` for audit, but does not automatically release or reverse stock. This is a known exactly-once limitation of a synchronous two-service write without a compensation workflow.
+A timeout is not proof that the reservation failed. The Inventory Service may have committed before the response was lost. The Order Service marks the order `FAILED` for audit and keeps the checkout expiry. The expiry worker retries release after the TTL; if the reservation exists, stock is restored and the failed order's expiry is cleared. This bounds the ambiguity window without introducing a full outbox/saga framework.
 
 ### Pending recovery
 
-There is no background reconciler in this version. A `PENDING` order can be inspected by an operator, and the idempotent reservation endpoint can be queried by reservation ID if needed. A production design would add an outbox/worker, reservation expiry, and a reconciliation job.
+Storefront checkouts and failed reservations are reconciled by the expiry worker. A general operations-order reconciler/outbox is still not implemented; a `PENDING` operations order can be inspected by an operator, and the idempotent reservation endpoint can be queried by reservation ID. A production design would add a full outbox and reconciliation job.
 
 ## API Boundary and Trust
 
@@ -280,11 +331,11 @@ Prometheus counters are per-process and reset when a container restarts.
 
 | Layer | What it proves |
 | --- | --- |
-| Inventory service tests | Product CRUD, validation, reservation success, idempotent replay, insufficient stock, unknown products, concurrent oversell prevention, duplicate reservation races |
-| Order service tests | Validation, idempotency, downstream failure mapping, replay behavior, concurrent duplicate creation, catalog proxy, client protocol handling |
-| Integration tests | Real Order → Inventory ASGI flow, concurrent oversell prevention, failed-order retention |
-| Security tests | Body limit, rate limit, CORS, validation error sanitization, security headers |
-| Frontend tests | Form validation, idempotency header, success navigation, retained failure display, order/inventory rendering |
+| Inventory service tests | Product CRUD, validation, reservation success/release, idempotent replay, insufficient stock, unknown products, concurrent oversell prevention, duplicate reservation races |
+| Order service tests | Validation, idempotency, downstream failure mapping, replay behavior, concurrent duplicate creation, catalog proxy, client protocol handling, storefront checkout/expiry |
+| Integration tests | Real Order → Inventory checkout and release, concurrent oversell prevention, failed-order retention, storefront expiry |
+| Security tests | Body limit, rate limit, CORS, validation error sanitization, security headers, storefront idempotency/validation |
+| Frontend tests | Storefront catalog/cart/checkout/order states, form validation, idempotency header, success navigation, retained failure display, order/inventory rendering |
 
 Backend tests use the dedicated test PostgreSQL on `55433`; they never use the application databases.
 
@@ -293,9 +344,9 @@ Backend tests use the dedicated test PostgreSQL on `55433`; they never use the a
 Not implemented in this phase:
 
 - Authentication and authorization.
+- Payment collection, Razorpay, webhooks, and reconciliation.
+- A general outbox/reconciliation job for operations orders.
 - TLS termination.
-- A background reconciliation worker or outbox.
-- Reservation expiry and stock release.
 - Multi-replica rate limiting.
 - Centralized logs, tracing, or dashboards.
 - Backups and disaster recovery.

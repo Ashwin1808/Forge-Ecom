@@ -5,7 +5,7 @@ import type { OrderList, ProductList } from '../api/types'
 import { EmptyState, ErrorBanner, TableSkeleton } from '../components/Feedback'
 import { ArrowRightIcon, PlusIcon, RefreshIcon } from '../components/Icons'
 import { PageHeader } from '../components/PageHeader'
-import { StatusBadge } from '../components/StatusBadge'
+import { PaymentBadge, StatusBadge } from '../components/StatusBadge'
 import { formatDate, formatMoney, itemCount, shortId } from '../lib/format'
 
 interface DashboardData {
@@ -13,6 +13,8 @@ interface DashboardData {
   confirmed: number
   failed: number
   pending: number
+  awaiting: number
+  expired: number
   recent: OrderList
   products: ProductList
 }
@@ -34,16 +36,27 @@ export function DashboardPage() {
       api.listOrders({ page_size: 1 }),
       api.listOrders({ page_size: 1, status: 'CONFIRMED' }),
       api.listOrders({ page_size: 1, status: 'FAILED' }),
+      api.listOrders({ page_size: 1, status: 'AWAITING_PAYMENT' }),
+      api.listOrders({ page_size: 1, status: 'EXPIRED' }),
       api.listOrders({ page_size: 6 }),
       api.listProducts({ page_size: 100 }),
     ])
-      .then(([total, confirmed, failed, recent, products]) => {
+      .then(([total, confirmed, failed, awaiting, expired, recent, products]) => {
         if (!active) return
         setData({
           total: total.total,
           confirmed: confirmed.total,
           failed: failed.total,
-          pending: Math.max(0, total.total - confirmed.total - failed.total),
+          awaiting: awaiting.total,
+          expired: expired.total,
+          pending: Math.max(
+            0,
+            total.total -
+              confirmed.total -
+              failed.total -
+              awaiting.total -
+              expired.total,
+          ),
           recent,
           products,
         })
@@ -112,6 +125,11 @@ export function DashboardPage() {
               <p className="metric-value">{data?.total ?? 0}</p>
               <p className="metric-foot">All order states</p>
             </article>
+            <article className="metric-card metric-card-warning">
+              <span className="metric-label">Awaiting payment</span>
+              <p className="metric-value">{data?.awaiting ?? 0}</p>
+              <p className="metric-foot">Reservations held</p>
+            </article>
             <article className="metric-card metric-card-positive">
               <span className="metric-label">Confirmed</span>
               <p className="metric-value">{data?.confirmed ?? 0}</p>
@@ -122,12 +140,10 @@ export function DashboardPage() {
               <p className="metric-value">{data?.failed ?? 0}</p>
               <p className="metric-foot">Needs review</p>
             </article>
-            <article className="metric-card">
-              <span className="metric-label">Low stock</span>
-              <p className="metric-value">
-                {data?.products.items.filter((p) => p.quantity_available <= 10).length ?? 0}
-              </p>
-              <p className="metric-foot">At or below 10 units</p>
+            <article className="metric-card metric-card-expired">
+              <span className="metric-label">Expired</span>
+              <p className="metric-value">{data?.expired ?? 0}</p>
+              <p className="metric-foot">Reservations released</p>
             </article>
           </section>
 
@@ -162,6 +178,7 @@ export function DashboardPage() {
                         <th scope="col">Items</th>
                         <th scope="col">Total</th>
                         <th scope="col">Status</th>
+                        <th scope="col">Payment</th>
                         <th scope="col">Created</th>
                       </tr>
                     </thead>
@@ -181,6 +198,9 @@ export function DashboardPage() {
                           <td>{formatMoney(order.total_cents, order.currency)}</td>
                           <td>
                             <StatusBadge status={order.status} />
+                          </td>
+                          <td>
+                            <PaymentBadge status={order.payment_status} />
                           </td>
                           <td className="cell-muted">{formatDate(order.created_at)}</td>
                         </tr>

@@ -107,3 +107,61 @@ def test_security_headers_are_present():
     assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["Referrer-Policy"] == "no-referrer"
     assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_storefront_checkout_requires_idempotency_key():
+    app = build_app()
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/storefront/checkout",
+        json={
+            "customer": {"name": "Grace Hopper", "email": "grace@example.com"},
+            "delivery_address": {
+                "line1": "1 Market Street",
+                "city": "San Francisco",
+                "postal_code": "94105",
+                "country": "US",
+            },
+            "items": [{"product_id": str(uuid.uuid4()), "quantity": 1}],
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_storefront_oversized_request_is_rejected_before_parsing():
+    app = build_app(max_request_bytes=2048)
+    client = TestClient(app)
+    response = client.post(
+        "/api/v1/storefront/checkout",
+        content=b"{" + b"a" * 5000 + b"}",
+        headers={
+            "Content-Type": "application/json",
+            "Idempotency-Key": str(uuid.uuid4()),
+        },
+    )
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "request_too_large"
+
+
+def test_storefront_validation_errors_do_not_echo_input_values():
+    app = build_app()
+    client = TestClient(app)
+    marker = "storefront-secret-marker"
+    response = client.post(
+        "/api/v1/storefront/checkout",
+        json={
+            "customer": {"name": "Grace Hopper", "email": f"{marker}-invalid"},
+            "delivery_address": {
+                "line1": marker * 20,
+                "city": "San Francisco",
+                "postal_code": "94105",
+                "country": "US",
+            },
+            "items": [{"product_id": str(uuid.uuid4()), "quantity": 1}],
+        },
+        headers={"Idempotency-Key": str(uuid.uuid4())},
+    )
+    assert response.status_code == 422
+    assert marker not in response.text
+    assert response.json()["error"]["code"] == "validation_error"

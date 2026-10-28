@@ -48,6 +48,11 @@ class InventoryMetrics:
             "Total units successfully reserved",
             registry=self.registry,
         )
+        self.units_released = Counter(
+            "inventory_units_released_total",
+            "Total units released from expired or cancelled reservations",
+            registry=self.registry,
+        )
         self.products_created = Counter(
             "inventory_products_created_total",
             "Products created through the API",

@@ -5,7 +5,7 @@ import type { Order } from '../api/types'
 import { ErrorBanner, TableSkeleton } from '../components/Feedback'
 import { ArrowLeftIcon, CheckIcon } from '../components/Icons'
 import { PageHeader } from '../components/PageHeader'
-import { StatusBadge } from '../components/StatusBadge'
+import { PaymentBadge, StatusBadge } from '../components/StatusBadge'
 import { formatDate, formatMoney, itemCount, shortId } from '../lib/format'
 
 export function OrderDetailPage() {
@@ -115,6 +115,36 @@ export function OrderDetailPage() {
             </div>
           )}
 
+          {order.status === 'AWAITING_PAYMENT' && (
+            <div className="alert alert-warning" role="status">
+              <div className="alert-content">
+                <strong>Awaiting payment</strong>
+                <p>
+                  Inventory is reserved for this storefront order
+                  {order.reservation_expires_at
+                    ? ` until ${formatDate(order.reservation_expires_at)}`
+                    : ''}
+                  . Payment collection is not connected in this phase.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {order.status === 'EXPIRED' && (
+            <div className="alert alert-error" role="alert">
+              <div className="alert-content">
+                <strong>Reservation expired</strong>
+                <p>
+                  {order.failure_message ??
+                    'The inventory hold expired before payment was completed.'}
+                </p>
+                <p className="alert-meta">
+                  Failure code: <code>{order.failure_code ?? 'reservation_expired'}</code>
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="detail-grid">
             <section className="panel">
               <div className="panel-heading">
@@ -122,7 +152,10 @@ export function OrderDetailPage() {
                   <h2>Order summary</h2>
                   <p>Identifiers and commercial totals.</p>
                 </div>
-                <StatusBadge status={order.status} />
+                <div className="badge-row">
+                  <StatusBadge status={order.status} />
+                  <PaymentBadge status={order.payment_status} />
+                </div>
               </div>
               <dl className="detail-list">
                 <div>
@@ -140,10 +173,26 @@ export function OrderDetailPage() {
                   <dd>{formatDate(order.updated_at)}</dd>
                 </div>
                 <div>
+                  <dt>Channel</dt>
+                  <dd>{order.channel}</dd>
+                </div>
+                <div>
+                  <dt>Payment</dt>
+                  <dd>{order.payment_status ?? 'Not started'}</dd>
+                </div>
+                <div>
                   <dt>Items</dt>
                   <dd>
                     {itemCount(order.items)}{' '}
                     {itemCount(order.items) === 1 ? 'unit' : 'units'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Reservation expires</dt>
+                  <dd>
+                    {order.reservation_expires_at
+                      ? formatDate(order.reservation_expires_at)
+                      : '—'}
                   </dd>
                 </div>
                 <div>
@@ -179,6 +228,25 @@ export function OrderDetailPage() {
                   <dt>State</dt>
                   <dd>{order.status}</dd>
                 </div>
+                {order.delivery_address && (
+                  <div>
+                    <dt>Delivery</dt>
+                    <dd>
+                      {order.delivery_address.line1}
+                      {order.delivery_address.line2
+                        ? `, ${order.delivery_address.line2}`
+                        : ''}
+                      <br />
+                      {order.delivery_address.city}
+                      {order.delivery_address.region
+                        ? `, ${order.delivery_address.region}`
+                        : ''}{' '}
+                      {order.delivery_address.postal_code}
+                      <br />
+                      {order.delivery_address.country}
+                    </dd>
+                  </div>
+                )}
               </dl>
             </section>
           </div>

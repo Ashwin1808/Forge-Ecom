@@ -5,6 +5,7 @@ import {
   OrdersIcon,
   PlusIcon,
   ProductsIcon,
+  StoreIcon,
 } from './Icons'
 
 const HEALTH_LABELS = {
@@ -57,6 +58,10 @@ export function Layout() {
             <ProductsIcon />
             <span>Inventory</span>
           </NavLink>
+          <Link to="/store" className="nav-link">
+            <StoreIcon />
+            <span>Open storefront</span>
+          </Link>
           <NavLink
             to="/orders/new"
             className={({ isActive }) => `nav-link nav-link-accent${isActive ? ' active' : ''}`}

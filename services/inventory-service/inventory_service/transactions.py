@@ -1,6 +1,7 @@
 import logging
 import uuid
 from collections.abc import Sequence
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -132,6 +133,60 @@ def reserve_stock(
             session.rollback()
             raise
         return True
+
+
+def release_stock(
+    session_factory: sessionmaker[Session],
+    *,
+    reservation_id: uuid.UUID,
+) -> tuple[bool, Reservation | None]:
+    """Release a reservation and return stock to the available pool.
+
+    Returns ``(True, reservation)`` when stock was released, ``(False, reservation)``
+    when the reservation was already released, and ``(False, None)`` when it does not
+    exist. Releasing is idempotent and safe to retry.
+    """
+    with session_factory() as session:
+        with session.begin():
+            reservation = session.execute(
+                select(Reservation)
+                .options(selectinload(Reservation.items))
+                .where(Reservation.id == reservation_id)
+                .with_for_update()
+            ).scalar_one_or_none()
+            if reservation is None:
+                return False, None
+            if reservation.status == "RELEASED":
+                return False, reservation
+
+            product_ids = sorted(item.product_id for item in reservation.items)
+            inventory_rows = (
+                session.execute(
+                    select(Inventory)
+                    .where(Inventory.product_id.in_(product_ids))
+                    .order_by(Inventory.product_id)
+                    .with_for_update()
+                )
+                .scalars()
+                .all()
+            )
+            inventory_by_product = {row.product_id: row for row in inventory_rows}
+            missing = [
+                product_id
+                for product_id in product_ids
+                if product_id not in inventory_by_product
+            ]
+            if missing:
+                raise RuntimeError("reservation references missing inventory rows")
+
+            for item in reservation.items:
+                inventory = inventory_by_product[item.product_id]
+                inventory.quantity_available += item.quantity
+                inventory.quantity_reserved -= item.quantity
+
+            reservation.status = "RELEASED"
+            reservation.released_at = datetime.now(timezone.utc)
+            return True, reservation
 
 
 def load_reservation(session: Session, reservation_id: uuid.UUID) -> Reservation | None:

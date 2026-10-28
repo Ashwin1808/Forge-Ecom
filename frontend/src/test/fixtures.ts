@@ -1,4 +1,10 @@
-import type { Order, OrderList, Product, ProductList } from '../api/types'
+import type {
+  DeliveryAddress,
+  Order,
+  OrderList,
+  Product,
+  ProductList,
+} from '../api/types'
 
 export const PRODUCT_LAMP: Product = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -26,9 +32,22 @@ export const PRODUCT_NOTEBOOK: Product = {
   created_at: '2026-10-02T12:00:00Z',
 }
 
+export const STORE_ADDRESS: DeliveryAddress = {
+  line1: '1 Market Street',
+  line2: 'Suite 200',
+  city: 'San Francisco',
+  region: 'CA',
+  postal_code: '94105',
+  country: 'US',
+}
+
 export const CONFIRMED_ORDER: Order = {
   id: '33333333-3333-4333-8333-333333333333',
   status: 'CONFIRMED',
+  payment_status: null,
+  channel: 'OPS',
+  delivery_address: null,
+  reservation_expires_at: null,
   customer: {
     name: 'Ada Lovelace',
     email: 'ada@example.com',
@@ -55,6 +74,10 @@ export const CONFIRMED_ORDER: Order = {
 export const FAILED_ORDER: Order = {
   id: '44444444-4444-4444-8444-444444444444',
   status: 'FAILED',
+  payment_status: null,
+  channel: 'OPS',
+  delivery_address: null,
+  reservation_expires_at: null,
   customer: {
     name: 'Grace Hopper',
     email: 'grace@example.com',
@@ -94,4 +117,34 @@ export function makeOrderList(items: Order[], total = items.length): OrderList {
     page_size: 20,
     total,
   }
+}
+
+export const AWAITING_ORDER: Order = {
+  id: '66666666-6666-4666-8666-666666666666',
+  status: 'AWAITING_PAYMENT',
+  payment_status: 'CREATED',
+  channel: 'STOREFRONT',
+  customer: {
+    name: 'Grace Hopper',
+    email: 'grace@example.com',
+  },
+  delivery_address: STORE_ADDRESS,
+  items: [
+    {
+      product_id: PRODUCT_LAMP.id,
+      sku: PRODUCT_LAMP.sku,
+      name: PRODUCT_LAMP.name,
+      quantity: 1,
+      unit_price_cents: PRODUCT_LAMP.price_cents,
+      currency: 'USD',
+      line_total_cents: PRODUCT_LAMP.price_cents,
+    },
+  ],
+  total_cents: PRODUCT_LAMP.price_cents,
+  currency: 'USD',
+  reservation_expires_at: '2026-10-28T18:15:00Z',
+  failure_code: null,
+  failure_message: null,
+  created_at: '2026-10-28T18:00:00Z',
+  updated_at: '2026-10-28T18:00:01Z',
 }

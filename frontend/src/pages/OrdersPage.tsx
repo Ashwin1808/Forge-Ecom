@@ -6,20 +6,28 @@ import { EmptyState, ErrorBanner, TableSkeleton } from '../components/Feedback'
 import { PlusIcon, RefreshIcon } from '../components/Icons'
 import { PageHeader } from '../components/PageHeader'
 import { Pagination } from '../components/Pagination'
-import { StatusBadge } from '../components/StatusBadge'
+import { PaymentBadge, StatusBadge } from '../components/StatusBadge'
 import { formatDate, formatMoney, itemCount, shortId } from '../lib/format'
 
 const STATUSES: Array<{ value: '' | OrderStatus; label: string }> = [
   { value: '', label: 'All statuses' },
   { value: 'PENDING', label: 'Pending' },
+  { value: 'AWAITING_PAYMENT', label: 'Awaiting payment' },
   { value: 'CONFIRMED', label: 'Confirmed' },
   { value: 'FAILED', label: 'Failed' },
+  { value: 'EXPIRED', label: 'Expired' },
 ]
 
 const PAGE_SIZE = 20
 
 function parseStatus(value: string | null): '' | OrderStatus {
-  if (value === 'PENDING' || value === 'CONFIRMED' || value === 'FAILED') {
+  if (
+    value === 'PENDING' ||
+    value === 'AWAITING_PAYMENT' ||
+    value === 'CONFIRMED' ||
+    value === 'FAILED' ||
+    value === 'EXPIRED'
+  ) {
     return value
   }
   return ''
@@ -156,6 +164,7 @@ export function OrdersPage() {
                     <th scope="col">Items</th>
                     <th scope="col">Total</th>
                     <th scope="col">Status</th>
+                    <th scope="col">Payment</th>
                     <th scope="col">Created</th>
                   </tr>
                 </thead>
@@ -175,6 +184,9 @@ export function OrdersPage() {
                       <td>{formatMoney(order.total_cents, order.currency)}</td>
                       <td>
                         <StatusBadge status={order.status} />
+                      </td>
+                      <td>
+                        <PaymentBadge status={order.payment_status} />
                       </td>
                       <td className="cell-muted">{formatDate(order.created_at)}</td>
                     </tr>

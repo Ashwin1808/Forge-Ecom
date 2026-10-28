@@ -8,8 +8,10 @@ In-scope threats exercised by the current design:
 
 - Malformed or oversized API requests.
 - Injection attempts through validation boundaries.
-- Idempotency-key abuse and duplicate order creation.
+- Idempotency-key abuse and duplicate order or checkout creation.
 - Concurrent stock manipulation and overselling.
+- Abandoned checkout reservations holding stock indefinitely.
+- Cross-channel order data exposure between storefront and operations views.
 - Error responses leaking untrusted input or internal details.
 - Browser-side framing, MIME sniffing, and script injection through response headers.
 - Accidental direct exposure of the internal Inventory Service or database.
@@ -31,8 +33,10 @@ Out of scope for this version:
 - Bounded strings, quantities, pagination, and item counts.
 - Email validation and normalization.
 - Rejection of duplicate product IDs within an order or reservation.
-- Required `Idempotency-Key` with a constrained character set and length.
-- Canonical request fingerprints for idempotency comparisons.
+- Required `Idempotency-Key` with a constrained character set and length on order and checkout creation.
+- Canonical request fingerprints for idempotency comparisons, including storefront customer/address data.
+- Server-side price, stock, and total calculation; browser cart data is not trusted.
+- Storefront order lookup is restricted to `channel=STOREFRONT`.
 - Request body limit of 128 KiB by default for write methods.
 - Per-client API rate limiting (120 requests/minute by default) with `Retry-After`.
 - Validation error details are reduced to location, message, and type. Raw input values are not echoed.
@@ -47,8 +51,11 @@ Out of scope for this version:
 - Database check constraints prevent negative inventory and invalid order states.
 - Unique constraints enforce one idempotency record per key and one reservation line per product.
 - Inventory rows are locked with `SELECT ... FOR UPDATE` in a deterministic order.
-- Reservations and order creation use database transactions with rollback on failure.
+- Reservations, releases, and order creation use database transactions with rollback on failure.
 - Stock shortage detection occurs before mutation.
+- Release is idempotent and restores available stock exactly once.
+- Checkout reservations carry an expiry; a background worker releases expired holds and marks orders `EXPIRED`.
+- Database constraints enforce valid order status, payment status, channel, and reservation status.
 
 ### Browser and edge
 
@@ -97,7 +104,7 @@ Out of scope for this version:
 
 These are deliberate and should be addressed before treating the workload as production:
 
-1. **No authentication or authorization.** Every local user can view and create orders.
+1. **No authentication or authorization.** Every local user can view and create orders. Storefront order lookup uses an unguessable UUID but has no customer identity check, so anyone with the URL can view that order.
 2. **No TLS.** Traffic is HTTP on loopback. nginx does not terminate TLS.
 3. **Rate limiting is per process and in memory.** Multiple replicas do not share counters.
 4. **Proxy header trust.** The Order Service accepts forwarded client IP headers; it is only safe because the port is loopback-bound and nginx is the intended client. Public exposure would require a trusted-proxy allowlist.
@@ -109,9 +116,10 @@ These are deliberate and should be addressed before treating the workload as pro
 10. **No WAF, bot protection, or DDoS mitigation.**
 11. **No backup, restore, or retention policy.** `make clean` deletes volumes.
 12. **No centralized logging or tracing.** Logs are local JSON on stdout.
-13. **No compensation workflow.** Timeout ambiguity can leave reserved stock without a confirmed order.
-14. **No audit trail for operator actions.** There is no operator identity in this version.
-15. **Test database uses trust authentication.** It is loopback-only, but it is not suitable for shared environments.
+13. **No payment processing or reconciliation.** Storefront orders stop at `AWAITING_PAYMENT`; `payment_status=CREATED` is not a paid state.
+14. **Expiry is time-based, not exactly-once.** The worker retries failed releases, but a downstream outage can extend how long stock remains reserved.
+15. **No audit trail for operator or customer actions.** There is no identity in this version.
+16. **Test database uses trust authentication.** It is loopback-only, but it is not suitable for shared environments.
 
 ## Secure Local Operation
 
@@ -136,6 +144,6 @@ A pipeline for this workload should add, at minimum:
 - **DAST:** OWASP ZAP baseline against the running frontend.
 - **Policy gates:** Fail builds on critical vulnerabilities, unsigned images, or exposed secrets.
 - **Runtime hardening:** read-only filesystems (already enabled for backends), dropped capabilities, seccomp/AppArmor profiles, and network policies.
-- **Identity:** OIDC authentication for the console and service-to-service credentials for the Inventory Service.
+- **Identity:** OIDC authentication for the console, customer order access control, and service-to-service credentials for the Inventory Service.
 - **TLS:** terminate HTTPS at nginx or a local reverse proxy with trusted certificates.
-- **Resilience:** outbox/worker reconciliation, reservation expiry, and stock release.
+- **Resilience:** outbox/reconciliation for operations orders, payment webhooks, and alerting on repeated expiry-release failures.

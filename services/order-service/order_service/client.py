@@ -187,6 +187,74 @@ class InventoryClient:
             status_code=response.status_code,
         )
 
+    async def release(
+        self,
+        *,
+        reservation_id: uuid.UUID,
+        request_id: str | None = None,
+    ) -> str:
+        headers = {"X-Request-ID": request_id} if request_id else {}
+        started = time.perf_counter()
+        try:
+            response = await self._client.post(
+                f"/api/v1/inventory/reservations/{reservation_id}/release",
+                headers=headers,
+            )
+        except httpx.TimeoutException as exc:
+            self._record("release", "timeout", started)
+            logger.warning(
+                "inventory_release_timeout",
+                extra={"reservation_id": str(reservation_id)},
+            )
+            raise InventoryClientError(
+                "timeout", "Inventory release timed out."
+            ) from exc
+        except httpx.RequestError as exc:
+            self._record("release", "unavailable", started)
+            logger.warning(
+                "inventory_release_unavailable",
+                extra={"reservation_id": str(reservation_id)},
+            )
+            raise InventoryClientError(
+                "unavailable", "Inventory service is unavailable."
+            ) from exc
+
+        if response.status_code == 200:
+            self._record("release", "success", started)
+            try:
+                payload = _ReservationPayload.model_validate(response.json())
+            except (ValidationError, ValueError) as exc:
+                raise InventoryClientError(
+                    "protocol", "Inventory service returned an invalid response."
+                ) from exc
+            return payload.status
+
+        error_code, details = self._parse_error(response)
+        if response.status_code == 404 and error_code == "reservation_not_found":
+            self._record("release", "not_found", started)
+            raise InventoryClientError(
+                "not_found",
+                "Reservation not found.",
+                details=details,
+                status_code=response.status_code,
+            )
+
+        self._record("release", "protocol", started)
+        logger.error(
+            "inventory_release_rejected",
+            extra={
+                "reservation_id": str(reservation_id),
+                "upstream_status": response.status_code,
+                "upstream_error_code": error_code,
+            },
+        )
+        raise InventoryClientError(
+            "protocol",
+            "Inventory service rejected the release unexpectedly.",
+            details=details,
+            status_code=response.status_code,
+        )
+
     async def list_products(
         self, *, page: int, page_size: int, request_id: str | None = None
     ) -> CatalogProductListOut:

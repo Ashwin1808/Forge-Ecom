@@ -156,7 +156,10 @@ Response `201`:
 {
   "id": "33333333-3333-4333-8333-333333333333",
   "status": "CONFIRMED",
+  "payment_status": null,
+  "channel": "OPS",
   "customer": {"name": "Ada Lovelace", "email": "ada@example.com"},
+  "delivery_address": null,
   "items": [
     {
       "product_id": "11111111-1111-4111-8111-111111111111",
@@ -170,6 +173,7 @@ Response `201`:
   ],
   "total_cents": 29800,
   "currency": "USD",
+  "reservation_expires_at": null,
   "failure_code": null,
   "failure_message": null,
   "created_at": "2026-10-28T10:50:05.000000Z",
@@ -218,7 +222,7 @@ Query parameters:
 | --- | --- | --- | --- |
 | `page` | integer | `1` | `>= 1` |
 | `page_size` | integer | `20` | `1..100` |
-| `status` | enum | none | `PENDING`, `CONFIRMED`, or `FAILED` |
+| `status` | enum | none | `PENDING`, `AWAITING_PAYMENT`, `CONFIRMED`, `EXPIRED`, or `FAILED` |
 
 Response shape matches the catalog list shape with `Order` objects and a `total`.
 
@@ -229,6 +233,115 @@ Returns one order, including items. `404 order_not_found` when missing.
 ### `GET /api/v1/orders/{order_id}/items`
 
 Returns `{"items": [...]}` for the order. `404 order_not_found` when missing.
+
+## Storefront
+
+### `POST /api/v1/storefront/checkout`
+
+Creates a storefront order and synchronously reserves inventory. The order stops at `AWAITING_PAYMENT`; no payment is collected in this phase.
+
+Required header:
+
+```text
+Idempotency-Key: <8..128 chars, [A-Za-z0-9._:-]>
+```
+
+Request:
+
+```json
+{
+  "customer": {
+    "name": "Grace Hopper",
+    "email": "grace@example.com"
+  },
+  "delivery_address": {
+    "line1": "1 Market Street",
+    "line2": "Suite 200",
+    "city": "San Francisco",
+    "region": "CA",
+    "postal_code": "94105",
+    "country": "US"
+  },
+  "items": [
+    {"product_id": "11111111-1111-4111-8111-111111111111", "quantity": 2}
+  ]
+}
+```
+
+Constraints:
+
+- Customer name: 1–120 characters after trimming.
+- Valid email address; normalized to lowercase.
+- Address line 1: 1–200 characters; city: 1–120; postal code: 1–32; country: 2–80.
+- Optional line 2 and region are trimmed and stored as `null` when blank.
+- 1–50 line items; quantity 1–100; product IDs unique.
+- Prices, stock, and totals are recalculated by the server.
+
+Response `201`:
+
+```json
+{
+  "id": "44444444-4444-4444-8444-444444444444",
+  "status": "AWAITING_PAYMENT",
+  "payment_status": "CREATED",
+  "channel": "STOREFRONT",
+  "customer": {"name": "Grace Hopper", "email": "grace@example.com"},
+  "delivery_address": {
+    "line1": "1 Market Street",
+    "line2": "Suite 200",
+    "city": "San Francisco",
+    "region": "CA",
+    "postal_code": "94105",
+    "country": "US"
+  },
+  "items": [
+    {
+      "product_id": "11111111-1111-4111-8111-111111111111",
+      "sku": "KEY-001",
+      "name": "Forge Mechanical Keyboard",
+      "quantity": 2,
+      "unit_price_cents": 14900,
+      "currency": "USD",
+      "line_total_cents": 29800
+    }
+  ],
+  "total_cents": 29800,
+  "currency": "USD",
+  "reservation_expires_at": "2026-10-28T16:00:00.000000Z",
+  "failure_code": null,
+  "failure_message": null,
+  "created_at": "2026-10-28T15:45:00.000000Z",
+  "updated_at": "2026-10-28T15:45:00.010000Z"
+}
+```
+
+Replay behavior:
+
+- Same key and same payload returns the original `AWAITING_PAYMENT` or `CONFIRMED` order.
+- An `EXPIRED` order returns `409 checkout_expired` with `order_id`.
+- A `FAILED` order returns its original failure.
+- A `PENDING` order returns `409 checkout_in_progress` and `Retry-After: 2`.
+- Same key with a different customer, address, or items returns `409 idempotency_conflict`.
+
+Failure responses use the same inventory codes as operations orders and retain `order_id` in `error.details`:
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| `409` | `inventory_insufficient_stock` | Reservation rejected; checkout retained as `FAILED` |
+| `409` | `checkout_expired` | Reservation expired; start a new checkout |
+| `409` | `checkout_in_progress` | Original checkout is still `PENDING` |
+| `409` | `idempotency_conflict` | Key reused with a different checkout payload |
+| `422` | `inventory_unknown_product` | Product missing/inactive; checkout retained as `FAILED` |
+| `422` | `validation_error` | Request validation failed |
+| `502` | `inventory_protocol` | Inventory response did not match the checkout |
+| `503` | `inventory_unavailable` | Inventory Service unreachable |
+| `504` | `inventory_timeout` | Inventory Service timed out |
+
+The default reservation TTL is 900 seconds. A background worker releases expired reservations and changes the order to `EXPIRED` with `failure_code=reservation_expired`.
+
+### `GET /api/v1/storefront/orders/{order_id}`
+
+Returns one storefront order, including the delivery address and payment status. Operations-channel orders are hidden and return `404 order_not_found`.
 
 ## Internal Inventory API
 
@@ -286,6 +399,15 @@ Responses:
 ### `GET /api/v1/inventory/reservations/{reservation_id}`
 
 Returns the stored reservation snapshot or `404 reservation_not_found`.
+
+### `POST /api/v1/inventory/reservations/{reservation_id}/release`
+
+Releases a reservation, restoring available stock and clearing reserved stock. The operation is idempotent.
+
+- `200` — reservation is `RELEASED` (including replay).
+- `404 reservation_not_found` — no reservation with that ID exists.
+
+The Order Service expiry worker calls this endpoint. It is internal and is not proxied by nginx.
 
 ## Examples
 

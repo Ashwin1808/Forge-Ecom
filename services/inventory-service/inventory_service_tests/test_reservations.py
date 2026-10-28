@@ -153,3 +153,52 @@ def test_reservation_metrics_record_outcome(client):
         r'inventory_reservation_attempts_total\{outcome="success"\} [1-9]', metrics
     )
     assert re.search(r"inventory_units_reserved_total [1-9]", metrics)
+
+
+def test_release_restores_stock_and_is_idempotent(client):
+    product = create_product(client, sku="REL-001", quantity=10)
+    reservation_id = uuid.uuid4()
+
+    reserved = reserve(client, reservation_id, [(product["id"], 4)])
+    assert reserved.status_code == 201
+
+    first = client.post(f"/api/v1/inventory/reservations/{reservation_id}/release")
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["status"] == "RELEASED"
+    assert body["released_at"] is not None
+
+    updated = stock(client, product["id"])
+    assert updated["quantity_available"] == 10
+    assert updated["quantity_reserved"] == 0
+
+    second = client.post(f"/api/v1/inventory/reservations/{reservation_id}/release")
+    assert second.status_code == 200, second.text
+    assert second.json()["released_at"] == body["released_at"]
+    updated = stock(client, product["id"])
+    assert updated["quantity_available"] == 10
+    assert updated["quantity_reserved"] == 0
+
+
+def test_release_unknown_reservation_returns_not_found(client):
+    response = client.post(f"/api/v1/inventory/reservations/{uuid.uuid4()}/release")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "reservation_not_found"
+
+
+def test_release_metrics_record_outcome(client):
+    product = create_product(client, sku="REL-002", quantity=5)
+    reservation_id = uuid.uuid4()
+    assert reserve(client, reservation_id, [(product["id"], 2)]).status_code == 201
+
+    assert (
+        client.post(
+            f"/api/v1/inventory/reservations/{reservation_id}/release"
+        ).status_code
+        == 200
+    )
+    metrics = client.get("/metrics").text
+    assert re.search(
+        r'inventory_reservation_attempts_total\{outcome="released"\} [1-9]', metrics
+    )
+    assert re.search(r"inventory_units_released_total [1-9]", metrics)

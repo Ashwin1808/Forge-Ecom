@@ -1,4 +1,5 @@
 import type {
+  CheckoutPayload,
   CreateOrderPayload,
   HealthStatus,
   Order,
@@ -139,6 +140,23 @@ export const api = {
       },
       body: JSON.stringify(payload),
     })
+  },
+
+  createCheckout(payload: CheckoutPayload, idempotencyKey: string): Promise<Order> {
+    return request<Order>('/api/v1/storefront/checkout', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: JSON.stringify(payload),
+    })
+  },
+
+  getStorefrontOrder(orderId: string): Promise<Order> {
+    return request<Order>(
+      `/api/v1/storefront/orders/${encodeURIComponent(orderId)}`,
+    )
   },
 }
 

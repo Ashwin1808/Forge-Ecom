@@ -127,3 +127,102 @@ async def test_catalog_maps_not_found():
     finally:
         await async_client.aclose()
     assert raised.value.kind == "product_not_found"
+
+
+async def test_release_parses_success_and_forwards_request_id():
+    reservation_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == (
+            f"/api/v1/inventory/reservations/{reservation_id}/release"
+        )
+        assert request.headers["x-request-id"] == "trace-release-1"
+        return httpx.Response(
+            200,
+            json={
+                "id": str(reservation_id),
+                "status": "RELEASED",
+                "released_at": "2026-10-28T12:00:00Z",
+                "items": [
+                    {
+                        "product_id": str(product_id),
+                        "sku": "KEY-001",
+                        "name": "Keyboard",
+                        "quantity": 2,
+                        "unit_price_cents": 1000,
+                        "currency": "USD",
+                    }
+                ],
+            },
+        )
+
+    metrics = OrderMetrics()
+    client, async_client = make_client(handler, metrics)
+    try:
+        status = await client.release(
+            reservation_id=reservation_id, request_id="trace-release-1"
+        )
+    finally:
+        await async_client.aclose()
+
+    assert status == "RELEASED"
+    from prometheus_client import generate_latest
+
+    assert 'downstream_requests_total{operation="release",outcome="success",target="inventory"} 1.0' in generate_latest(
+        metrics.registry
+    ).decode()
+
+
+async def test_release_maps_not_found():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            404,
+            json={
+                "error": {
+                    "code": "reservation_not_found",
+                    "message": "Reservation does not exist.",
+                },
+                "request_id": "abc",
+            },
+        )
+
+    client, async_client = make_client(handler)
+    try:
+        with pytest.raises(InventoryClientError) as raised:
+            await client.release(reservation_id=uuid.uuid4())
+    finally:
+        await async_client.aclose()
+    assert raised.value.kind == "not_found"
+    assert raised.value.status_code == 404
+
+
+async def test_release_maps_timeout():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    client, async_client = make_client(handler)
+    try:
+        with pytest.raises(InventoryClientError) as raised:
+            await client.release(reservation_id=uuid.uuid4())
+    finally:
+        await async_client.aclose()
+    assert raised.value.kind == "timeout"
+
+
+async def test_release_maps_unexpected_status_to_protocol_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            500,
+            json={"error": {"code": "internal_error", "message": "boom"}},
+        )
+
+    client, async_client = make_client(handler)
+    try:
+        with pytest.raises(InventoryClientError) as raised:
+            await client.release(reservation_id=uuid.uuid4())
+    finally:
+        await async_client.aclose()
+    assert raised.value.kind == "protocol"
+    assert raised.value.status_code == 500
