@@ -11,11 +11,17 @@ This file records what is actually implemented and verified. A phase is only mar
 | Backend tests (`make test-backend`) | 109 passed |
 | Frontend tests (`make test-frontend`) | 22 passed |
 | Frontend build (`npm --prefix frontend run build`) | Passed |
-| Frontend lint (`npm --prefix frontend run lint`) | Passed with 4 advisory `react(set-state-in-effect)` warnings in existing operations pages |
+| Frontend lint (`npm --prefix frontend run lint`) | Passed with no warnings |
 | Docker Compose stack | frontend, order-service, inventory-service, postgres healthy after rebuild |
+| Docker persistence | Orders and products survived a full `make down` / `up` cycle; database volumes were retained |
+| Compose shutdown | `make down` removed app, test, and observability containers and the Compose network without orphaned resources |
 | Migrations | Inventory `8d3f0b6a2c1e` and Order `4e8a1c2d7f90` applied on stack start; upgrade/downgrade/check verified on temporary databases |
 | Smoke test (`make smoke`) | Operations order confirmed and replayed; storefront checkout returned `AWAITING_PAYMENT`/`CREATED` and replayed |
 | Docker expiry worker | With a 5-second test TTL, a storefront checkout reached `EXPIRED` and stock returned to its pre-checkout available/reserved counts |
+| CI | GitHub Actions run `40723897362` passed all backend, frontend, security, and container jobs |
+| Security scans | `npm audit` 0; `pip-audit` no known vulnerabilities; Trivy image HIGH/CRITICAL 0; Trivy config 0; Trivy secrets 0 |
+| Observability | Prometheus targets `UP`; Grafana healthy; datasource healthy; 7-panel dashboard provisioned; alerts inactive |
+| Deploy and rollback | Tagged deploys `test-a`/`test-b` and rollback passed health and smoke checks |
 | Git remote | `https://github.com/Ashwin1808/Forge-Ecom.git` |
 
 ## Implemented Capabilities
@@ -59,8 +65,11 @@ This file records what is actually implemented and verified. A phase is only mar
 - Failed and expired orders retained for audit.
 - Health, readiness, Prometheus metrics, structured logs, request IDs, rate limiting, body limits, security headers, and CORS restrictions.
 - Multi-stage backend images, non-root users, read-only backend filesystems, and `no-new-privileges`.
+- GitHub Actions CI with backend/frontend tests, dependency audits, Trivy scans, and image builds.
+- Optional Prometheus/Grafana profile with a provisioned dashboard and starter alerts.
+- Tagged local deploy and rollback scripts with health and smoke verification.
 - Idempotent development product seed.
-- API, architecture, and security documentation.
+- API, architecture, operations, security, and portfolio documentation.
 
 ## Phase Status
 
@@ -71,16 +80,16 @@ This file records what is actually implemented and verified. A phase is only mar
 | 1B. Customer/operator access separation | Not started | No authentication or authorization. Storefront order access is UUID-based only. |
 | 2. Razorpay test-mode payments | Not started | No Razorpay client, signature verification, webhook, payment object, or reconciliation. Storefront orders stop at `AWAITING_PAYMENT` with `payment_status=CREATED`. |
 | 3. Database and API quality | Partial baseline | Migrations, constraints, validation, pagination, health, error shape, storefront fields, and release state exist. Payment data, search/category, audit log, and customer order history are missing. |
-| 4. Docker and local development | Partial baseline | Core stack exists and was rebuilt. Prometheus, Grafana, OpenTelemetry, profiles, and resource settings are missing. |
-| 5. CI/CD | Not started | No GitHub Actions or Jenkins pipelines. |
-| 6. DevSecOps and supply chain | Partial baseline | Runtime hardening and input controls exist. Authentication, authorization, audit logging, SAST, dependency scanning, secret scanning, image scanning, and SBOM are missing. |
+| 4. Docker and local development | Mostly complete for local portfolio | Core stack, test profile, observability profile, health checks, and tagged deploy/rollback exist. OpenTelemetry and resource limits are missing. |
+| 5. CI/CD | Partial | GitHub Actions CI is implemented and passing. Automated deployment/CD is intentionally not implemented. |
+| 6. DevSecOps and supply chain | Partial | Runtime hardening, input controls, dependency audits, Trivy secret/config scans, and image scans exist. Authentication, authorization, audit logging, SAST, SBOM, and signing are missing. |
 | 7. Terraform and cloud architecture | Not started | No Terraform modules or cloud deployment documentation. |
 | 8. Ansible and Linux automation | Not started | No Ansible roles or playbooks. |
 | 9. Kubernetes, Helm, and GitOps | Not started | No manifests, Helm chart, kind setup, or Argo CD configuration. |
-| 10. Observability and SRE | Partial baseline | Metrics and JSON logs exist. Prometheus, Grafana, tracing, dashboards, alerts, SLIs/SLOs, and load tests are missing. |
+| 10. Observability and SRE | Partial | Metrics, JSON logs, Prometheus, Grafana, a provisioned dashboard, and two starter alerts exist. Alertmanager, tracing, SLIs/SLOs, and load tests are missing. |
 | 11. Backup, restore, and incident response | Not started | No backup/restore scripts or incident runbooks. |
-| 12. Interview and troubleshooting lab | Not started | No `docs/interview-lab/` scenarios. |
-| 13. Documentation and project quality | Partial baseline | README, architecture, API, security, and this status file exist. Most requested documents are still pending. |
+| 12. Interview and troubleshooting lab | Partial | `docs/interview-notes.md` contains five verified scenarios; no separate `docs/interview-lab/` directory. |
+| 13. Documentation and project quality | Mostly complete for local portfolio | README, architecture, API, operations, security, screenshots, finish plan, interview notes, and this status file exist. |
 
 ## Known Gaps and Risks
 
@@ -94,11 +103,12 @@ This file records what is actually implemented and verified. A phase is only mar
 - No product search or category data model.
 - Low-stock reporting exists only as client-side filtering in the dashboard.
 - No administrative audit trail.
-- No CI, dependency scanning, secret scanning, SAST, image scanning, or SBOM.
-- No Prometheus/Grafana/OpenTelemetry services or dashboards.
+- CI is verification only; there is no automated deployment or CD environment.
+- No SAST, SBOM, image signing, provenance, or git-history secret scan.
+- Prometheus/Grafana are local and single-node; there is no Alertmanager, tracing, SLO, or load test.
 - No Terraform, Ansible, Kubernetes, Helm, or GitOps assets.
 - No backup/restore or incident runbooks.
-- Frontend lint reports four non-blocking `react(set-state-in-effect)` warnings in existing operations pages.
+- Trivy filesystem scan reports one accepted `react-router-dom` 7.18.5 advisory; `npm audit` reports 0 and no fixed 7.x release is available.
 - Base images are tag-pinned, not digest-pinned.
 - Rate limiting is in-memory and per process.
 - The Order Service is published directly on loopback in addition to nginx.
@@ -110,11 +120,13 @@ This file records what is actually implemented and verified. A phase is only mar
   - `RAZORPAY_KEY_SECRET`
   - `RAZORPAY_WEBHOOK_SECRET`
 - Mocked payment tests can be implemented and run without credentials.
-- Optional tooling for later phases may need local installation: GitHub Actions runner access, Jenkins, Terraform, Ansible, kind, Helm, Argo CD, Trivy, Syft, Gitleaks, and Semgrep.
+- No additional credentials or cloud accounts are required for the current CI, monitoring, deploy, or rollback verification.
 
 ## Next Recommended Phase
 
-Phase 1B: add customer/operator access boundaries and customer order access control. After that, Phase 2 can add Razorpay test-mode payment collection on top of the existing `AWAITING_PAYMENT` lifecycle.
+For the current portfolio finish, stop here. The verified story is the application, tests, CI, security scans, Compose lifecycle, observability, and rollback.
+
+If continuing later, Phase 1B should add customer/operator access boundaries and customer order access control. Phase 2 can then add Razorpay test-mode payment collection on top of the existing `AWAITING_PAYMENT` lifecycle.
 
 Before payment is declared complete, define and implement:
 

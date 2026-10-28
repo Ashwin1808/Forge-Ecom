@@ -69,10 +69,11 @@ Out of scope for this version:
 
 ### Network exposure
 
-- Only the frontend (`8080`) and Order Service (`8000`) are published, both bound to `127.0.0.1`.
+- Only the frontend (`8080`) and Order Service (`8000`) are published for the application, both bound to `127.0.0.1`.
 - Inventory Service is exposed only on the Compose network.
 - PostgreSQL is not published to the host.
 - The test PostgreSQL is loopback-only and behind the `test` profile.
+- Prometheus (`9090`) and Grafana (`3001`) are loopback-only and behind the optional `observability` profile.
 - Service-to-service calls use the Compose DNS name, not host networking.
 
 ### Containers
@@ -80,7 +81,8 @@ Out of scope for this version:
 - Backend images use multi-stage builds; build tooling is not present in runtime images.
 - Backends run as a dedicated non-root UID/GID `10001`.
 - Backend root filesystems are read-only with a writable `/tmp` tmpfs.
-- `no-new-privileges` is set on application containers.
+- The frontend runs as the unprivileged nginx UID `101`, with the Alpine package set upgraded at image build time.
+- `no-new-privileges` is set on application and monitoring containers.
 - Application containers do not mount the Docker socket or host filesystems.
 - Health checks verify readiness rather than only process liveness.
 - Database migrations run from the container entrypoint before the app starts.
@@ -92,6 +94,7 @@ Out of scope for this version:
 - Database credentials are injected through environment variables.
 - The application does not log passwords, full connection URLs, or request bodies.
 - Local defaults are explicitly labeled as local-only.
+- Grafana anonymous access is disabled; the local admin password is supplied through `GRAFANA_ADMIN_PASSWORD`.
 
 ### Dependencies
 
@@ -99,6 +102,27 @@ Out of scope for this version:
 - Frontend dependencies are locked in `package-lock.json`.
 - Runtime images install from prebuilt wheels in a separate build stage.
 - No cloud accounts, third-party APIs, or external data stores are required.
+
+### Automated security checks
+
+GitHub Actions runs these checks on every push to `main` and every pull request:
+
+- `pip-audit` against the backend development requirements.
+- `npm audit --audit-level=high` against the frontend lockfile.
+- Trivy secret and Docker/Compose misconfiguration scanning.
+- Trivy HIGH/CRITICAL image scans for all three application images, ignoring unfixed findings.
+- Backend tests and frontend lint/test/build as correctness gates.
+
+Verified on 2026-10-28:
+
+- `npm audit`: 0 vulnerabilities.
+- `pip-audit`: no known vulnerabilities.
+- Trivy image scans: 0 HIGH/CRITICAL findings after the frontend image upgrade.
+- Trivy config scan: 0 misconfigurations.
+- Trivy secret scan: 0 secrets.
+- GitHub Actions CI run `40723897362`: success.
+
+One Trivy filesystem advisory remains for `react-router-dom` 7.18.5. It is not reported by `npm audit`, affects React Server Components rather than this client-only SPA, and no fixed 7.x release is published. The risk is accepted for the local portfolio build and should be rechecked when a fixed release is available.
 
 ## Known Limitations
 
@@ -111,8 +135,8 @@ These are deliberate and should be addressed before treating the workload as pro
 5. **Secrets are plain environment variables.** Docker secrets or a secret manager are not used.
 6. **Default credentials exist for local convenience.** They must never be reused outside this isolated stack.
 7. **Base images are tag-pinned, not digest-pinned.** Tags can move.
-8. **No image signing, SBOM, or vulnerability scanning in this phase.**
-9. **No CI/CD pipeline or policy gates yet.** Tests are run manually or through Make.
+8. **No image signing, SBOM, or provenance.** Images are scanned, but not signed or attested.
+9. **CI is verification only.** It does not deploy, enforce signed images, or run DAST.
 10. **No WAF, bot protection, or DDoS mitigation.**
 11. **No backup, restore, or retention policy.** `make clean` deletes volumes.
 12. **No centralized logging or tracing.** Logs are local JSON on stdout.
@@ -120,6 +144,9 @@ These are deliberate and should be addressed before treating the workload as pro
 14. **Expiry is time-based, not exactly-once.** The worker retries failed releases, but a downstream outage can extend how long stock remains reserved.
 15. **No audit trail for operator or customer actions.** There is no identity in this version.
 16. **Test database uses trust authentication.** It is loopback-only, but it is not suitable for shared environments.
+17. **Monitoring is a local single-node stack.** Prometheus and Grafana are loopback-only, have no Alertmanager, and use local volumes.
+18. **No SAST or Python lint gate.** CI runs frontend lint, Python compilation, tests, and dependency/image scans.
+19. **Secret scanning is working-tree focused.** Trivy scans the filesystem; a full git-history scan with Gitleaks or TruffleHog is not configured.
 
 ## Secure Local Operation
 
@@ -132,18 +159,20 @@ These are deliberate and should be addressed before treating the workload as pro
 
 ## Recommended DevSecOps Next Steps
 
-A pipeline for this workload should add, at minimum:
+Already implemented in CI:
 
-- **Secret scanning:** Gitleaks or TruffleHog on every commit.
-- **Dependency scanning:** `pip-audit`, `npm audit`, Dependabot/Renovate.
-- **SAST:** Semgrep or Bandit for Python, ESLint security rules for TypeScript.
-- **Container scanning:** Trivy or Grype against built images.
-- **SBOM:** Syft-generated SPDX or CycloneDX artifacts.
-- **Signing and provenance:** Cosign signatures and SLSA-style provenance.
-- **IaC scanning:** Checkov or Trivy config for Compose and Dockerfiles.
+- Dependency auditing with `pip-audit` and `npm audit`.
+- Secret and Compose/Dockerfile misconfiguration scanning with Trivy.
+- HIGH/CRITICAL container image scanning for all application images.
+
+Still missing:
+
+- **Git-history secret scanning:** Gitleaks or TruffleHog on every commit.
+- **SAST:** Semgrep or Bandit for Python, security rules for TypeScript.
+- **SBOM and signing:** Syft-generated SPDX/CycloneDX, Cosign signatures, and SLSA-style provenance.
 - **DAST:** OWASP ZAP baseline against the running frontend.
-- **Policy gates:** Fail builds on critical vulnerabilities, unsigned images, or exposed secrets.
-- **Runtime hardening:** read-only filesystems (already enabled for backends), dropped capabilities, seccomp/AppArmor profiles, and network policies.
+- **Policy gates:** Fail builds on signed-image policy, critical findings, or exposed secrets.
+- **Runtime hardening:** dropped capabilities, seccomp/AppArmor profiles, and network policies.
 - **Identity:** OIDC authentication for the console, customer order access control, and service-to-service credentials for the Inventory Service.
 - **TLS:** terminate HTTPS at nginx or a local reverse proxy with trusted certificates.
-- **Resilience:** outbox/reconciliation for operations orders, payment webhooks, and alerting on repeated expiry-release failures.
+- **Resilience:** Alertmanager routing, outbox/reconciliation for operations orders, payment webhooks, and alerting on repeated expiry-release failures.

@@ -27,6 +27,13 @@ flowchart LR
     T[Test runner] -->|ASGI / HTTP| O
     T -->|ASGI / HTTP| I
     T -->|SQL :55433| TD[(test databases)]
+
+    P[Prometheus :9090] -->|scrape /metrics| O
+    P -->|scrape /metrics| I
+    G[Grafana :3001] -->|query| P
+
+    CI[GitHub Actions] -.->|tests, audits, image scans| O
+    CI -.->|tests, audits, image scans| I
 ```
 
 Published host ports:
@@ -34,6 +41,8 @@ Published host ports:
 - `127.0.0.1:8080` — frontend/nginx
 - `127.0.0.1:8000` — Order Service direct API and metrics
 - `127.0.0.1:55433` — test PostgreSQL only, behind the `test` profile
+- `127.0.0.1:9090` — Prometheus, behind the `observability` profile
+- `127.0.0.1:3001` — Grafana, behind the `observability` profile
 
 Not published:
 
@@ -327,6 +336,19 @@ Structured JSON logs include:
 
 Prometheus counters are per-process and reset when a container restarts.
 
+The optional `observability` profile runs Prometheus and Grafana on loopback. Prometheus scrapes both services and evaluates target-down and elevated-5xx alerts. Grafana provisions the Prometheus datasource and the `Forge Commerce Overview` dashboard. This is local operational evidence, not a production HA monitoring design; there is no Alertmanager, tracing, or long-term remote storage.
+
+## Delivery and Operations
+
+GitHub Actions validates every `main` push and pull request:
+
+1. Backend tests against a PostgreSQL 17 service container.
+2. Frontend lint, Vitest, production build, and dependency audit.
+3. Python dependency audit and Trivy secret/config scans.
+4. All three application image builds and HIGH/CRITICAL image scans.
+
+Delivery is intentionally local: `scripts/deploy-local.sh` builds tagged images, recreates the app containers, waits for health, and runs the smoke test. `scripts/rollback-local.sh` restores the previous tag from `.deploy/` and repeats the checks. There is no cloud deployment or GitOps controller.
+
 ## Test Strategy
 
 | Layer | What it proves |
@@ -336,8 +358,9 @@ Prometheus counters are per-process and reset when a container restarts.
 | Integration tests | Real Order → Inventory checkout and release, concurrent oversell prevention, failed-order retention, storefront expiry |
 | Security tests | Body limit, rate limit, CORS, validation error sanitization, security headers, storefront idempotency/validation |
 | Frontend tests | Storefront catalog/cart/checkout/order states, form validation, idempotency header, success navigation, retained failure display, order/inventory rendering |
+| CI | Backend/frontend checks, dependency audits, Trivy secret/config/image scans, and all three image builds |
 
-Backend tests use the dedicated test PostgreSQL on `55433`; they never use the application databases.
+Backend tests use the dedicated test PostgreSQL on `55433`; they never use the application databases. The GitHub Actions run `40723897362` passed all jobs for commit `c99fe0e`.
 
 ## Deliberate Deferrals
 
@@ -348,8 +371,8 @@ Not implemented in this phase:
 - A general outbox/reconciliation job for operations orders.
 - TLS termination.
 - Multi-replica rate limiting.
-- Centralized logs, tracing, or dashboards.
+- Centralized logs, distributed tracing, Alertmanager, or SLO reporting.
 - Backups and disaster recovery.
-- CI/CD, image signing, SBOM generation, and vulnerability gates.
+- Automated CD, cloud deployment, image signing, SBOM generation, and signed-image policy gates.
 
 These are candidates for the next DevSecOps phases rather than hidden production claims.

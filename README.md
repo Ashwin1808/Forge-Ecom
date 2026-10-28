@@ -17,6 +17,9 @@ The application is intentionally small enough to run on a laptop, but it exercis
 | Inventory service | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, PostgreSQL |
 | Edge | nginx unprivileged, serving the SPA and proxying the Order API |
 | Containers | Docker Compose, multi-stage builds, non-root application users |
+| Observability | Prometheus, Grafana, provisioned dashboard and starter alerts |
+| CI | GitHub Actions, pytest, Vitest, pip-audit, npm audit, Trivy |
+| Delivery | Tagged local images with deploy and rollback scripts |
 | Tests | pytest + httpx ASGI transport, Vitest + Testing Library |
 
 ## Architecture
@@ -33,7 +36,7 @@ nginx :8080  ── /api/* and /health ──▶  order-service :8000
   │                                                     │
   │                                                     └──▶ PostgreSQL (forge_inventory)
   │
-  └── only the frontend is published on the host
+  └── frontend published; Order API on loopback; monitoring optional
 ```
 
 The Order Service also runs a checkout-expiry worker. It releases inventory holds through the internal Inventory Service and marks abandoned storefront checkouts `EXPIRED`.
@@ -43,14 +46,32 @@ The Order Service also runs a checkout-expiry worker. It releases inventory hold
 - Each service owns a separate database and role. The Order Service does not read inventory tables.
 - The browser never receives inventory-service credentials or direct access.
 
-The Order Service is also published on loopback at `http://localhost:8000` for API exploration and metrics. PostgreSQL and the Inventory Service are not published.
+The Order Service is also published on loopback at `http://localhost:8000` for API exploration and metrics. Prometheus and Grafana are optional loopback-only services behind the `observability` profile. PostgreSQL and the Inventory Service are not published.
+
+## Screenshots
+
+### Customer storefront
+
+![Forge Commerce storefront](docs/screenshots/storefront.png)
+
+### Operations console
+
+![Forge Commerce operations dashboard](docs/screenshots/operations-dashboard.png)
+
+### Orders
+
+![Forge Commerce orders page](docs/screenshots/orders.png)
+
+### Grafana dashboard
+
+![Forge Commerce Grafana overview](docs/screenshots/grafana-overview.png)
 
 ## Quick Start
 
 Prerequisites:
 
 - Docker Desktop or Docker Engine with Compose v2
-- Ports `8080` and `8000` available on `127.0.0.1`
+- Ports `8080` and `8000` available on `127.0.0.1`; optional monitoring uses `9090` and `3001`
 - About 2 GB of free disk space for images and volumes
 - Python 3.12 and Node.js 24 only if you want to run tests or the frontend dev server
 
@@ -82,10 +103,12 @@ Useful commands:
 ```bash
 make up              # Build and start the full stack
 make logs            # Follow service logs
-make down            # Stop app and test containers, keep volumes
+make down            # Stop app, test, and monitoring containers, keep volumes
 make test            # Backend + frontend test suites
 make seed            # Re-run the idempotent product seed
 make clean           # Stop and delete database volumes
+make observability-up   # Start Prometheus + Grafana
+make observability-down # Stop Prometheus + Grafana
 ```
 
 To stop the stack without deleting data:
@@ -94,7 +117,7 @@ To stop the stack without deleting data:
 make down
 ```
 
-This also stops the `postgres-test` container. Raw `docker compose down` stops only the default services.
+This also stops `postgres-test`, Prometheus, and Grafana when they are running. Raw `docker compose down` stops only the default services and can leave profile containers behind.
 
 To reset all local data:
 
@@ -279,7 +302,7 @@ The GitHub Actions workflow in `.github/workflows/ci.yml` runs on pushes to `mai
 - Docker builds for the frontend, Order Service, and Inventory Service.
 - Trivy high/critical image scans with unfixed vulnerabilities ignored.
 
-The workflow uses only GitHub-hosted runners and the repository's existing dependencies. It does not deploy to a cloud account.
+The workflow uses only GitHub-hosted runners and the repository's existing dependencies. It does not deploy to a cloud account. The badge above links to the latest successful `main` run.
 
 ## Local Development
 
@@ -326,6 +349,7 @@ Compose reads optional values from `.env`. Defaults are safe for local use only.
 | `LOG_LEVEL` | `INFO` | Application log level |
 | `ORDER_RATE_LIMIT_PER_MINUTE` | `120` | Per-client API request limit on the Order Service |
 | `INVENTORY_RATE_LIMIT_PER_MINUTE` | `120` | Per-client API request limit on the Inventory Service |
+| `GRAFANA_ADMIN_PASSWORD` | `forge_grafana_local_dev` | Local Grafana admin password (observability profile only) |
 
 Service-level settings can also be supplied as environment variables, including `DATABASE_URL`, `INVENTORY_BASE_URL`, `CORS_ORIGINS`, `SEED_ON_START`, `MAX_REQUEST_BYTES`, `CHECKOUT_RESERVATION_TTL_SECONDS`, `CHECKOUT_EXPIRY_ENABLED`, `CHECKOUT_EXPIRY_SWEEP_SECONDS`, and database pool/timeouts. Defaults live in each service's `config.py`.
 
@@ -357,6 +381,38 @@ Example metric names:
 - `checkout_orders_expired_total`
 - `downstream_requests_total`
 
+## Observability Profile
+
+Prometheus and Grafana are optional and isolated behind the Compose `observability` profile:
+
+```bash
+make observability-up
+```
+
+- Prometheus: http://127.0.0.1:9090
+- Grafana: http://127.0.0.1:3001 (`admin` / `forge_grafana_local_dev` by default)
+- Provisioned dashboard: **Forge Commerce Overview**
+
+Prometheus scrapes both services and evaluates two starter alerts: target down and elevated 5xx rate. The dashboard shows request rate, error rate, p95 latency, checkout outcomes, reserved units, and expired checkouts. The exact verification commands are in the [operations runbook](docs/operations.md). Stop them with:
+
+```bash
+make observability-down
+```
+
+The monitoring data is stored in the `prometheus-data` and `grafana-data` volumes. This is local observability evidence, not a production HA monitoring stack.
+
+## Local Deploy and Rollback
+
+The application images can be tagged, deployed, and rolled back without rebuilding from an older commit:
+
+```bash
+./scripts/deploy-local.sh v1
+./scripts/deploy-local.sh v2
+./scripts/rollback-local.sh
+```
+
+Each deploy builds tagged images, recreates the app containers, waits for health, and runs the smoke test. Rollback retags and restores the previous image tag, then repeats the health and smoke checks. State is kept in the ignored `.deploy/` directory.
+
 ## Repository Layout
 
 ```text
@@ -367,8 +423,10 @@ tests/integration/            Cross-service end-to-end tests
 tests/security/               API hardening tests
 database/init/                PostgreSQL roles and database bootstrap
 docker/entrypoint.sh          Migration entrypoint for both backends
-docs/                         Architecture, API, and security documentation
-scripts/                      Seed and smoke-test helpers
+monitoring/                   Prometheus config, alerts, and Grafana provisioning
+scripts/                      Seed, smoke, deploy, and rollback helpers
+.github/workflows/            GitHub Actions CI pipeline
+docs/                         Architecture, API, operations, security, and portfolio docs
 docker-compose.yml            Local stack definition
 Makefile                      Common developer commands
 ```
@@ -377,7 +435,11 @@ Makefile                      Common developer commands
 
 - [Architecture](docs/architecture.md): service boundaries, data model, workflows, consistency, and failure modes.
 - [API reference](docs/api.md): endpoints, headers, payloads, status codes, and examples.
+- [Operations](docs/operations.md): verified lifecycle, persistence, monitoring, deploy, and rollback commands.
 - [Security](docs/security.md): implemented controls, threat model, limitations, and next DevSecOps steps.
+- [Implementation status](docs/implementation-status.md): what is actually implemented and verified.
+- [Project finish plan](docs/project-finish-plan.md): prioritized scope, acceptance criteria, and non-goals.
+- [Interview notes](docs/interview-notes.md): truthful resume bullets and project scenarios.
 
 ## Troubleshooting
 
@@ -385,6 +447,7 @@ Makefile                      Common developer commands
 
 - `8080` or `8000` is occupied: stop the conflicting process or change the loopback port mapping in `docker-compose.yml`.
 - Do not use host port `5432`; the stack keeps PostgreSQL internal. Test PostgreSQL uses `55433`.
+- Grafana is published on loopback port `3001` because local port `3000` is often already in use. If `localhost:3001` reaches an unrelated local app, open `127.0.0.1:3001`; macOS may resolve `localhost` to IPv6 while Compose publishes on IPv4 loopback.
 
 **Stack is unhealthy**
 
