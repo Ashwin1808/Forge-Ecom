@@ -22,7 +22,7 @@ services:
     build:
       context: .
       dockerfile: services/inventory-service/Dockerfile
-    image: forge-inventory-service:local
+    image: forge-inventory-service:${IMAGE_TAG:-local}
     environment:
       DATABASE_URL: postgresql+psycopg://forge_inventory:${INVENTORY_DB_PASSWORD:-forge_inventory_local_dev}@postgres:5432/forge_inventory
       ENVIRONMENT: local
@@ -59,7 +59,7 @@ services:
     build:
       context: .
       dockerfile: services/order-service/Dockerfile
-    image: forge-order-service:local
+    image: forge-order-service:${IMAGE_TAG:-local}
     environment:
       DATABASE_URL: postgresql+psycopg://forge_order:${ORDER_DB_PASSWORD:-forge_order_local_dev}@postgres:5432/forge_orders
       INVENTORY_BASE_URL: http://inventory-service:8001
@@ -103,7 +103,7 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    image: forge-commerce-frontend:local
+    image: forge-commerce-frontend:${IMAGE_TAG:-local}
     depends_on:
       order-service:
         condition: service_healthy
@@ -115,6 +115,62 @@ services:
       timeout: 4s
       retries: 6
       start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.15.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      order-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/ready >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 4s
+      retries: 6
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:13.2.5
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-forge_grafana_local_dev}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+      start_period: 20s
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -143,3 +199,5 @@ services:
 volumes:
   postgres-data:
   postgres-test-data:
+  prometheus-data:
+  grafana-data:

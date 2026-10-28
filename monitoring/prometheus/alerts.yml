@@ -1,0 +1,20 @@
+groups:
+  - name: forge-commerce
+    rules:
+      - alert: ForgeTargetDown
+        expr: up{job=~"order-service|inventory-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} is not being scraped"
+          description: "Prometheus has failed to scrape {{ $labels.job }} for more than one minute."
+
+      - alert: ForgeHighServerErrorRate
+        expr: sum by (job) (rate(http_requests_total{status=~"5.."}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.job }} is returning 5xx responses"
+          description: "The 5xx rate for {{ $labels.job }} has exceeded 0.1 requests/second for five minutes."

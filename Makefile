@@ -3,15 +3,16 @@ COMPOSE := docker compose
 PYTHON ?= python3.12
 PYTEST := .venv/bin/pytest
 NPM := npm --prefix frontend
+COMPOSE_OBS := $(COMPOSE) --profile observability
 
-.PHONY: help install-dev up down build restart logs ps test test-backend test-frontend test-db lint build-frontend seed smoke clean
+.PHONY: help install-dev up down build restart logs ps test test-backend test-frontend test-db lint build-frontend seed smoke observability-up observability-down deploy rollback clean
 
 help:
 	@echo "Forge Commerce local commands"
 	@echo ""
 	@echo "  make install-dev    Create .venv and install backend/frontend dev dependencies"
 	@echo "  make up             Build and start the full stack"
-	@echo "  make down           Stop app and test containers (keeps volumes)"
+	@echo "  make down           Stop app, test, and monitoring containers (keeps volumes)"
 	@echo "  make build          Build all container images"
 	@echo "  make restart        Recreate the application containers"
 	@echo "  make logs           Follow logs from all services"
@@ -35,7 +36,7 @@ up:
 	$(COMPOSE) up --build -d --wait
 
 down:
-	$(COMPOSE) --profile test down
+	$(COMPOSE) --profile test --profile observability down
 
 build:
 	$(COMPOSE) build
@@ -72,5 +73,17 @@ seed:
 smoke:
 	./scripts/smoke-test.sh
 
+observability-up:
+	$(COMPOSE_OBS) up -d --wait prometheus grafana
+
+observability-down:
+	$(COMPOSE_OBS) stop prometheus grafana
+
+deploy:
+	./scripts/deploy-local.sh "$(TAG)"
+
+rollback:
+	./scripts/rollback-local.sh
+
 clean:
-	$(COMPOSE) --profile test down -v
+	$(COMPOSE) --profile test --profile observability down -v
