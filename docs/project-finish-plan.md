@@ -26,7 +26,7 @@ Acceptance: all tests pass, smoke passes, persisted orders survive restart, and 
 - Docker image builds for all three application images.
 - High/critical image vulnerability scanning with Trivy.
 
-Acceptance: workflow passes on GitHub for the current `main` commit. Verified by run `40723897362` (all six jobs passed).
+Acceptance: workflow passes on GitHub for the current `main` commit. Verified by run `40730320230` on commit `e870c0e` (all six jobs passed).
 
 ## Priority 3: Verify Compose operations
 
@@ -67,7 +67,7 @@ Acceptance: docs match reality, no fabricated claims, and the repository shows w
 - Frontend: 22 tests passed; lint and production build passed.
 - Smoke: operations order and storefront checkout created and replayed through nginx.
 - Persistence: orders and products survived a full `make down` / `up` cycle with volumes retained.
-- CI: GitHub Actions run `40723897362` passed all jobs.
+- CI: GitHub Actions run `40730320230` passed all jobs on commit `e870c0e`.
 - Security: `npm audit` 0; `pip-audit` clean; Trivy image HIGH/CRITICAL 0; config 0; secrets 0.
 - Observability: Prometheus targets `UP`; Grafana healthy; dashboard and datasource loaded.
 - Deploy/rollback: tagged deploy and previous-tag rollback passed health and smoke checks.

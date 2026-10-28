@@ -360,7 +360,7 @@ Delivery is intentionally local: `scripts/deploy-local.sh` builds tagged images,
 | Frontend tests | Storefront catalog/cart/checkout/order states, form validation, idempotency header, success navigation, retained failure display, order/inventory rendering |
 | CI | Backend/frontend checks, dependency audits, Trivy secret/config/image scans, and all three image builds |
 
-Backend tests use the dedicated test PostgreSQL on `55433`; they never use the application databases. The GitHub Actions run `40723897362` passed all jobs for commit `c99fe0e`.
+Backend tests use the dedicated test PostgreSQL on `55433`; they never use the application databases. The GitHub Actions run `40730320230` passed all jobs for commit `e870c0e`.
 
 ## Deliberate Deferrals
 

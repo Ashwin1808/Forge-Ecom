@@ -18,7 +18,7 @@ This file records what is actually implemented and verified. A phase is only mar
 | Migrations | Inventory `8d3f0b6a2c1e` and Order `4e8a1c2d7f90` applied on stack start; upgrade/downgrade/check verified on temporary databases |
 | Smoke test (`make smoke`) | Operations order confirmed and replayed; storefront checkout returned `AWAITING_PAYMENT`/`CREATED` and replayed |
 | Docker expiry worker | With a 5-second test TTL, a storefront checkout reached `EXPIRED` and stock returned to its pre-checkout available/reserved counts |
-| CI | GitHub Actions run `40723897362` passed all backend, frontend, security, and container jobs |
+| CI | GitHub Actions run `40730320230` passed all backend, frontend, security, and container jobs on commit `e870c0e` |
 | Security scans | `npm audit` 0; `pip-audit` no known vulnerabilities; Trivy image HIGH/CRITICAL 0; Trivy config 0; Trivy secrets 0 |
 | Observability | Prometheus targets `UP`; Grafana healthy; datasource healthy; 7-panel dashboard provisioned; alerts inactive |
 | Deploy and rollback | Tagged deploys `test-a`/`test-b` and rollback passed health and smoke checks |

@@ -120,7 +120,7 @@ Verified on 2026-10-28:
 - Trivy image scans: 0 HIGH/CRITICAL findings after the frontend image upgrade.
 - Trivy config scan: 0 misconfigurations.
 - Trivy secret scan: 0 secrets.
-- GitHub Actions CI run `40723897362`: success.
+- GitHub Actions CI run `40730320230` on commit `e870c0e`: success.
 
 One Trivy filesystem advisory remains for `react-router-dom` 7.18.5. It is not reported by `npm audit`, affects React Server Components rather than this client-only SPA, and no fixed 7.x release is published. The risk is accepted for the local portfolio build and should be rechecked when a fixed release is available.
 
