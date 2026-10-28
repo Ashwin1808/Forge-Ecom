@@ -1,5 +1,7 @@
 # Forge Commerce
 
+[![CI](https://github.com/Ashwin1808/Forge-Ecom/actions/workflows/ci.yml/badge.svg)](https://github.com/Ashwin1808/Forge-Ecom/actions/workflows/ci.yml)
+
 Forge Commerce is a local, production-shaped commerce workload built for DevSecOps exercises. It combines a React customer storefront and operations console, two FastAPI microservices, PostgreSQL, Docker Compose, automated tests, and explicit security boundaries.
 
 The application is intentionally small enough to run on a laptop, but it exercises real failure modes: idempotent order creation and checkout, concurrent inventory reservation, reservation expiry and release, downstream timeouts, retained failed orders, health checks, migrations, and container hardening.
@@ -80,7 +82,7 @@ Useful commands:
 ```bash
 make up              # Build and start the full stack
 make logs            # Follow service logs
-make down            # Stop containers, keep database volumes
+make down            # Stop app and test containers, keep volumes
 make test            # Backend + frontend test suites
 make seed            # Re-run the idempotent product seed
 make clean           # Stop and delete database volumes
@@ -89,8 +91,10 @@ make clean           # Stop and delete database volumes
 To stop the stack without deleting data:
 
 ```bash
-docker compose down
+make down
 ```
+
+This also stops the `postgres-test` container. Raw `docker compose down` stops only the default services.
 
 To reset all local data:
 
@@ -263,6 +267,19 @@ services/order-service/order_service_tests/
 tests/integration/
 tests/security/
 ```
+
+## Continuous Integration
+
+The GitHub Actions workflow in `.github/workflows/ci.yml` runs on pushes to `main` and on pull requests:
+
+- Backend tests against a PostgreSQL 17 service container.
+- Frontend lint, Vitest, production build, and `npm audit`.
+- Python dependency audit with `pip-audit`.
+- Trivy secret and Docker/Compose misconfiguration scanning.
+- Docker builds for the frontend, Order Service, and Inventory Service.
+- Trivy high/critical image scans with unfixed vulnerabilities ignored.
+
+The workflow uses only GitHub-hosted runners and the repository's existing dependencies. It does not deploy to a cloud account.
 
 ## Local Development
 

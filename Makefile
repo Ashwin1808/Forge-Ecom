@@ -11,7 +11,7 @@ help:
 	@echo ""
 	@echo "  make install-dev    Create .venv and install backend/frontend dev dependencies"
 	@echo "  make up             Build and start the full stack"
-	@echo "  make down           Stop the stack (keeps database volumes)"
+	@echo "  make down           Stop app and test containers (keeps volumes)"
 	@echo "  make build          Build all container images"
 	@echo "  make restart        Recreate the application containers"
 	@echo "  make logs           Follow logs from all services"
@@ -35,7 +35,7 @@ up:
 	$(COMPOSE) up --build -d --wait
 
 down:
-	$(COMPOSE) down
+	$(COMPOSE) --profile test down
 
 build:
 	$(COMPOSE) build
