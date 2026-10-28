@@ -21,8 +21,6 @@ export function ProductsPage() {
 
   useEffect(() => {
     let active = true
-    setLoading(true)
-    setError(null)
 
     api
       .listProducts({ page, page_size: PAGE_SIZE })
@@ -45,6 +43,18 @@ export function ProductsPage() {
     }
   }, [page, reload])
 
+  const refresh = () => {
+    setLoading(true)
+    setError(null)
+    setReload((value) => value + 1)
+  }
+
+  const loadPage = (nextPage: number) => {
+    setLoading(true)
+    setError(null)
+    setPage(nextPage)
+  }
+
   return (
     <div className="stack">
       <PageHeader
@@ -55,7 +65,7 @@ export function ProductsPage() {
           <button
             type="button"
             className="button button-secondary"
-            onClick={() => setReload((value) => value + 1)}
+            onClick={refresh}
             disabled={loading}
           >
             <RefreshIcon /> Refresh
@@ -67,7 +77,7 @@ export function ProductsPage() {
         <ErrorBanner
           message={error.message}
           requestId={error.requestId}
-          onRetry={() => setReload((value) => value + 1)}
+          onRetry={refresh}
         />
       )}
 
@@ -135,7 +145,7 @@ export function ProductsPage() {
                 page={data.page}
                 pageSize={data.page_size}
                 total={data.total}
-                onPageChange={setPage}
+                onPageChange={loadPage}
               />
             )}
           </>

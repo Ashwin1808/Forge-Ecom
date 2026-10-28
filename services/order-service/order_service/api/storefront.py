@@ -28,7 +28,6 @@ from .orders import (
     FAILURE_DEFINITIONS,
     IDEMPOTENCY_KEY_PATTERN,
     failure_error,
-    get_database,
     get_inventory,
     get_metrics,
     get_session,

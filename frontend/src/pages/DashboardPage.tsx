@@ -29,8 +29,6 @@ export function DashboardPage() {
 
   useEffect(() => {
     let active = true
-    setLoading(true)
-    setError(null)
 
     Promise.all([
       api.listOrders({ page_size: 1 }),
@@ -77,6 +75,12 @@ export function DashboardPage() {
     }
   }, [reload])
 
+  const refresh = () => {
+    setLoading(true)
+    setError(null)
+    setReload((value) => value + 1)
+  }
+
   const lowStock = data
     ? data.products.items
         .filter((product) => product.quantity_available <= 10)
@@ -95,7 +99,7 @@ export function DashboardPage() {
             <button
               type="button"
               className="button button-secondary"
-              onClick={() => setReload((value) => value + 1)}
+              onClick={refresh}
               disabled={loading}
             >
               <RefreshIcon /> Refresh
@@ -111,7 +115,7 @@ export function DashboardPage() {
         <ErrorBanner
           message={error.message}
           requestId={error.requestId}
-          onRetry={() => setReload((value) => value + 1)}
+          onRetry={refresh}
         />
       )}
 

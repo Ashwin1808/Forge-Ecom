@@ -25,8 +25,6 @@ export function OrderDetailPage() {
   useEffect(() => {
     if (!orderId) return
     let active = true
-    setLoading(true)
-    setError(null)
 
     api
       .getOrder(orderId)
@@ -51,6 +49,12 @@ export function OrderDetailPage() {
       active = false
     }
   }, [orderId, reload])
+
+  const retry = () => {
+    setLoading(true)
+    setError(null)
+    setReload((value) => value + 1)
+  }
 
   return (
     <div className="stack">
@@ -79,7 +83,7 @@ export function OrderDetailPage() {
         <ErrorBanner
           message={error.message}
           requestId={error.requestId}
-          onRetry={() => setReload((value) => value + 1)}
+          onRetry={retry}
         />
       )}
 

@@ -47,8 +47,6 @@ export function OrdersPage() {
 
   useEffect(() => {
     let active = true
-    setLoading(true)
-    setError(null)
 
     api
       .listOrders({
@@ -75,7 +73,15 @@ export function OrdersPage() {
     }
   }, [page, status, reload])
 
+  const refresh = () => {
+    setLoading(true)
+    setError(null)
+    setReload((value) => value + 1)
+  }
+
   const updateFilters = (nextStatus: string, nextPage = 1) => {
+    setLoading(true)
+    setError(null)
     const params = new URLSearchParams()
     if (nextStatus) params.set('status', nextStatus)
     if (nextPage > 1) params.set('page', String(nextPage))
@@ -95,7 +101,7 @@ export function OrdersPage() {
             <button
               type="button"
               className="button button-secondary"
-              onClick={() => setReload((value) => value + 1)}
+              onClick={refresh}
               disabled={loading}
             >
               <RefreshIcon /> Refresh
@@ -111,7 +117,7 @@ export function OrdersPage() {
         <ErrorBanner
           message={error.message}
           requestId={error.requestId}
-          onRetry={() => setReload((value) => value + 1)}
+          onRetry={refresh}
         />
       )}
 
